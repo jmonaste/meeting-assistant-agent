@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 import meeting_assistant.llm as llm_mod
@@ -76,6 +78,29 @@ def test_non_retryable_errors_propagate_immediately(fast_llm):
     with pytest.raises(ValueError):
         fast_llm._invoke_with_retry(runner, [])
     assert runner.calls == 1
+
+
+def test_retries_emit_reviewable_log_records(fast_llm):
+    """Each backoff wait is logged with attempt count and delay (for --log-file review)."""
+    records: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record.getMessage())
+
+    lg = logging.getLogger("meeting_assistant.llm")
+    old_level = lg.level
+    handler = _Capture(level=logging.DEBUG)
+    lg.addHandler(handler)
+    lg.setLevel(logging.DEBUG)
+    try:
+        runner = _Runner(1, RuntimeError("429 rate limit"))
+        fast_llm._invoke_with_retry(runner, [])
+    finally:
+        lg.removeHandler(handler)
+        lg.setLevel(old_level)
+    assert any("retrying in" in m for m in records)
+    assert any("LLM call ok" in m for m in records)
 
 
 class _StructStub:

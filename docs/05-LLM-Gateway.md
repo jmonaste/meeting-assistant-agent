@@ -27,6 +27,11 @@ across the whole `__cause__` chain — is retried up to `MEETING_LLM_RETRIES`
 times with exponential backoff (base `MEETING_LLM_RETRY_BASE_DELAY`, doubling,
 capped at 60 s). Non-transient errors propagate immediately.
 
+Every attempt is observable: successful calls log their duration at DEBUG,
+each backoff wait logs at WARNING with the attempt count, the delay and a
+one-line summary of the error — so retries surface live in the console and,
+with `--log-file`, land in the audit trail with timestamps and thread names.
+
 When the retries are exhausted, the gateway raises `MeetingLLMUnavailable`
 (a `MeetingLLMError` subclass) with a cleaned one-line summary — gateways
 answer with whole HTML error pages, which are stripped. This distinction

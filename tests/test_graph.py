@@ -8,7 +8,7 @@ from conftest import FakeLLM
 
 from meeting_assistant.graph.builder import run_pipeline
 from meeting_assistant.llm import MeetingLLMUnavailable
-from meeting_assistant.model.extraction import ChunkExtraction
+from meeting_assistant.model.extraction import ChunkExtraction, Quote
 
 
 def _run(fake_llm, settings, sample_inventory, tmp_path, **kw):
@@ -59,6 +59,25 @@ def test_pipeline_resume_reuses_thread(fake_llm, settings, sample_inventory, tmp
     assert resumed["report_md"] == first["report_md"]
 
 
+class _RescueLLM(FakeLLM):
+    """The gapfill evidence pass finds one item the chunk passes missed."""
+
+    def structured(self, schema, system, user, role="worker"):  # type: ignore[override]
+        if schema is ChunkExtraction and "EVIDENCE GATHERED" in user:
+            return ChunkExtraction(
+                quotes=[Quote(text="A unique rescued statement", segment_ids=["S1"])]
+            )
+        return super().structured(schema, system, user, role)
+
+
+def test_gapfill_rescue_keeps_item_count_consistent(settings, sample_inventory, tmp_path):
+    llm = _RescueLLM(settings)
+    state = _run(llm, settings, sample_inventory, tmp_path)
+    assert state["rescued"]  # the rescue actually happened
+    total = sum(len(bucket) for bucket in state["items"].values())
+    assert state["item_count"] == total  # summary count includes rescued items
+
+
 class _DownLLM(FakeLLM):
     """Every chunk extraction fails like a dead endpoint (504/429 after retries)."""
 
@@ -67,6 +86,28 @@ class _DownLLM(FakeLLM):
             self.calls.append("ChunkExtraction")
             raise MeetingLLMUnavailable("endpoint still failing after 5 attempts: 504 Gateway Time-out")
         return super().structured(schema, system, user, role)
+
+
+def test_pipeline_writes_detailed_log(fake_llm, settings, sample_inventory, tmp_path):
+    import logging
+
+    log_path = tmp_path / "run.log"
+    lg = logging.getLogger("meeting_assistant")
+    old_level = lg.level
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setLevel(logging.DEBUG)
+    lg.addHandler(handler)
+    lg.setLevel(logging.DEBUG)
+    try:
+        _run(fake_llm, settings, sample_inventory, tmp_path)
+    finally:
+        lg.removeHandler(handler)
+        handler.close()
+        lg.setLevel(old_level)
+    text = log_path.read_text(encoding="utf-8")
+    assert "starting pass 1/" in text
+    assert "review loop finished" in text
+    assert "compose: report" in text
 
 
 def test_pipeline_stops_sweeping_when_endpoint_is_unhealthy(settings, sample_inventory, tmp_path):

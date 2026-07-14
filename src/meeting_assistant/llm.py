@@ -15,6 +15,7 @@ Tests inject a fake subclass, so no other module talks to the model directly.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from typing import TypeVar
@@ -24,6 +25,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from pydantic import BaseModel, ValidationError
 
 from .config import Settings
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -165,15 +168,30 @@ class MeetingLLM:
         delay = max(0.1, self.settings.llm_retry_base_delay)
         last: BaseException | None = None
         for attempt in range(retries + 1):
+            started = time.perf_counter()
             try:
-                return runner.invoke(messages)
+                result = runner.invoke(messages)
+                logger.debug(
+                    "LLM call ok in %.1fs (attempt %d/%d)",
+                    time.perf_counter() - started, attempt + 1, retries + 1,
+                )
+                return result
             except Exception as exc:  # noqa: BLE001 - classified below
                 if not _is_retryable(exc):
+                    logger.debug(
+                        "LLM call failed with non-retryable error after %.1fs: %s",
+                        time.perf_counter() - started, _error_summary(exc),
+                    )
                     raise
                 last = exc
                 if attempt < retries:
+                    logger.warning(
+                        "transient endpoint error (attempt %d/%d), retrying in %.0fs: %s",
+                        attempt + 1, retries + 1, delay, _error_summary(exc),
+                    )
                     time.sleep(delay)
                     delay = min(delay * 2, 60.0)
+        logger.error("giving up after %d attempts: %s", retries + 1, _error_summary(last))
         raise MeetingLLMUnavailable(
             f"endpoint still failing after {retries + 1} attempts: {_error_summary(last)}"
         ) from last
@@ -192,9 +210,11 @@ class MeetingLLM:
         result = self._try_structured(llm, schema, system, user, "json_schema", retry=False)
         if result is not None:
             return result
+        logger.debug("structured %s: json_schema failed, trying function_calling", schema.__name__)
         result = self._try_structured(llm, schema, system, user, "function_calling", retry=True)
         if result is not None:
             return result
+        logger.debug("structured %s: function_calling failed, parsing plain JSON", schema.__name__)
         return self._structured_via_json(schema, system, user, role)
 
     def _try_structured(
@@ -296,6 +316,7 @@ class MeetingLLM:
                 text = reply.content if isinstance(reply.content, str) else str(reply.content)
                 return text, messages
             for call in calls:
+                logger.debug("tool call: %s(%s)", call["name"], str(call.get("args", {}))[:200])
                 tool = by_name.get(call["name"])
                 if tool is None:
                     output = f"ERROR: unknown tool {call['name']!r}"
@@ -307,6 +328,7 @@ class MeetingLLM:
                 messages.append(ToolMessage(content=output, tool_call_id=call["id"], name=call["name"]))
 
         # Out of budget: ask for a final answer without tools.
+        logger.debug("tool loop budget exhausted after %d iterations", limit)
         messages.append(HumanMessage(content="Tool budget exhausted. Answer now with what you have."))
         reply = self._invoke_with_retry(self._chat_model(role), messages)
         text = reply.content if isinstance(reply.content, str) else str(reply.content)

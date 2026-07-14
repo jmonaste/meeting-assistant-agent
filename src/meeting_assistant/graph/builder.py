@@ -12,6 +12,7 @@ what was missed) or falls through to ``reduce`` once sweeping is exhausted.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -23,6 +24,8 @@ from ..llm import MeetingLLM
 from ..model.transcript import TranscriptInventory
 from .nodes import PipelineNodes
 from .state import MeetingState
+
+logger = logging.getLogger(__name__)
 
 
 def build_graph(settings: Settings, llm: MeetingLLM | None = None, checkpointer=None):
@@ -121,6 +124,9 @@ def run_pipeline(
             inputs["inventory"] = inventory
         if resume and _has_progress(saver, thread_id):
             inputs = None  # continue from the last checkpoint
+            logger.info("resuming run %s from its last checkpoint", thread_id)
+        else:
+            logger.debug("starting run thread %s", thread_id)
 
         for update in graph.stream(inputs, config=config, stream_mode="updates"):
             for node, payload in update.items():

@@ -112,6 +112,7 @@ Fill in `.env`:
 | `MEETING_CHUNK_MAX_CHARS` | Char budget per transcript chunk (default 9000). |
 | `MEETING_REQUEST_TIMEOUT` | HTTP timeout per LLM call in seconds (default 300). |
 | `MEETING_LLM_RETRIES` | Retries per call on 429/5xx/timeouts, with exponential backoff (default 4). |
+| `MEETING_LOG_FILE` | File to append the detailed run log to (same as `--log-file`). |
 
 Both models must support OpenAI-style **tool calling**; if a structured call
 fails, the client retries once and then falls back to JSON parsing.
@@ -130,13 +131,29 @@ meeting-assistant process meeting.srt --context ./agenda.md -o out/
 
 # useful flags
 meeting-assistant process ... --max-sweeps 5     # review even more thoroughly
+meeting-assistant process ... --log-file run.log # full call/retry/decision audit trail
 meeting-assistant process ... --resume           # continue an interrupted run
 meeting-assistant process ... --no-cache         # ignore cached chunk extractions
-meeting-assistant process ... -v                 # show every pipeline event
+meeting-assistant process ... -v                 # mirror info-level log events to the console
 ```
 
 Outputs land in `out/` as `<Meeting>-Report.md` and `<Meeting>-Report.json`.
 The Markdown drops straight into any Obsidian vault.
+
+### Following and reviewing a run
+
+The console shows a live progress view: one bar per review pass (with the
+running item count and how many were new after each pass — you can watch the
+loop go dry), plus spinner rows for the planning, synthesis, gap-fill and
+compose phases, and a category summary table at the end. Endpoint retries and
+chunk failures surface live as warnings while the bars keep moving.
+
+For a full audit trail, pass `--log-file run.log` (or set `MEETING_LOG_FILE`).
+Every LLM call (with duration), every retry (with its backoff delay and the
+error that caused it), every cache hit, pass decision, gap-fill query and
+failure is appended with a timestamp and thread name, so a slow or degraded
+run can be reviewed after the fact. `-v` additionally mirrors info-level
+events to the console.
 
 ### Supported transcript formats
 
@@ -196,7 +213,7 @@ from:
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 36 tests: parser, ingestion, chunker, merge, renderer, LLM gateway retries, full graph (fake LLM)
+pytest          # 46 tests: parser, ingestion, chunker, merge, renderer, LLM gateway retries, CLI, full graph (fake LLM)
 ```
 
 The suite runs the entire pipeline against a bundled sample transcript using an

@@ -111,6 +111,12 @@ class Settings(BaseSettings):
         alias="MEETING_USE_CACHE",
         description="Reuse cached per-chunk extractions when the chunk text has not changed.",
     )
+    log_file: str = Field(
+        default="",
+        alias="MEETING_LOG_FILE",
+        description="Path of a file to append the detailed run log to (every LLM call, "
+        "retry, cache hit and pass decision, with timestamps). Empty disables file logging.",
+    )
 
     def resolved_worker_model(self) -> str:
         return self.worker_model or self.lead_model or "gpt-oss"

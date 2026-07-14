@@ -13,6 +13,8 @@ a warning instead of failing the run.
 
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 
 from langgraph.graph import END
@@ -21,7 +23,7 @@ from langgraph.types import Send
 from ..config import Settings, cache_dir
 from ..extractors import scan_signals
 from ..ingest.loader import build_inventory
-from ..llm import MeetingLLM
+from ..llm import MeetingLLM, _error_summary
 from ..model.extraction import (
     CATEGORIES,
     ChunkExtraction,
@@ -34,6 +36,8 @@ from ..tools import build_transcript_tools
 from .cache import ExtractionCache
 from .merge import consolidate, render_known_items
 from .state import ChunkPayload, MeetingState
+
+logger = logging.getLogger(__name__)
 
 _FIELD_BY_NAME = {field: field for field, _l, _n in CATEGORIES}
 _FIELD_BY_LABEL = {label.lower(): field for field, label, _n in CATEGORIES}
@@ -118,6 +122,12 @@ class PipelineNodes:
             enabled=self.settings.use_cache,
         )
         signals = scan_signals(inv)
+        logger.info(
+            "ingest: %d segments, %d words, format=%s, %d chunks, %d speakers",
+            len(inv.segments), inv.total_words, inv.source_format, len(inv.chunks), len(inv.speakers),
+        )
+        if signals:
+            logger.debug("signal cues detected: %s", {cat: len(hits) for cat, hits in signals.items()})
         return {"inventory": inv, "signals": signals, "rounds_done": 0, "warnings": list(inv.warnings)}
 
     # ------------------------------------------------------------------ plan
@@ -139,9 +149,14 @@ class PipelineNodes:
                 meeting_type="Unknown (analysis plan unavailable)",
                 focus_areas=["Extract every decision, action item, question and risk."],
             )
-            return {"plan": plan, "warnings": [f"plan node fell back to defaults: {exc}"]}
+            # Console/report get a one-line summary; the log file keeps the full detail.
+            summary = _error_summary(exc)
+            logger.warning("plan node fell back to defaults: %s", summary)
+            logger.debug("plan failure detail", exc_info=True)
+            return {"plan": plan, "warnings": [f"plan node fell back to defaults: {summary}"]}
         if not plan.title:
             plan.title = inv.title_hint or "Meeting"
+        logger.info("plan: %r (%s); focus: %s", plan.title, plan.meeting_type, "; ".join(plan.focus_areas))
         return {"plan": plan}
 
     # ------------------------------------------------- map / sweep loop
@@ -171,6 +186,10 @@ class PipelineNodes:
             failed_last = sum(1 for r in state.get("failures", []) if r == last_round)
             n_chunks = len(inv.chunks)
             if n_chunks and failed_last * 2 >= n_chunks:
+                logger.warning(
+                    "review stopped after pass %d: %d of %d chunk extractions failed",
+                    rounds_done, failed_last, n_chunks,
+                )
                 out["current_chunks"] = []  # -> reduce
                 out["warnings"] = [
                     f"stopped reviewing after round {last_round}: {failed_last} of "
@@ -180,6 +199,14 @@ class PipelineNodes:
                 ]
                 return out
             if rounds_done >= max_rounds or count <= prev_count:
+                reason = (
+                    "sweep cap reached" if rounds_done >= max_rounds
+                    else "last sweep added no new items"
+                )
+                logger.info(
+                    "review loop finished after %d pass(es): %s (%d items total)",
+                    rounds_done, reason, count,
+                )
                 out["current_chunks"] = []  # -> reduce
                 return out
         known = render_known_items(items) if rounds_done >= 1 else ""
@@ -195,6 +222,10 @@ class PipelineNodes:
             )
             for ch in inv.chunks
         ]
+        logger.info(
+            "starting pass %d/%d: %d chunks (%d items so far)",
+            rounds_done + 1, max_rounds, len(payloads), count,
+        )
         out["current_chunks"] = payloads
         out["rounds_done"] = rounds_done + 1
         return out
@@ -207,9 +238,11 @@ class PipelineNodes:
 
     def extract_chunk(self, payload: ChunkPayload) -> dict:
         rnd = payload["round"]
+        started = time.perf_counter()
         if rnd == 0 and self.cache is not None:
             cached = self.cache.get(payload["chunk_hash"])
             if cached is not None:
+                logger.debug("chunk %d pass 1: cache hit", payload["chunk_index"])
                 return {"harvest": [cached]}
 
         parts: list[str] = []
@@ -224,11 +257,22 @@ class PipelineNodes:
         try:
             extraction = self.llm.structured(ChunkExtraction, system, user, role="worker")
         except Exception as exc:  # noqa: BLE001
+            summary = _error_summary(exc)
+            logger.warning(
+                "chunk %d pass %d failed after %.1fs: %s",
+                payload["chunk_index"], rnd + 1, time.perf_counter() - started, summary,
+            )
+            logger.debug("chunk %d failure detail", payload["chunk_index"], exc_info=True)
             return {
                 "harvest": [ChunkExtraction()],
                 "failures": [rnd],
-                "warnings": [f"extraction failed for chunk {payload['chunk_index']} (round {rnd}): {exc}"],
+                "warnings": [f"extraction failed for chunk {payload['chunk_index']} (round {rnd}): {summary}"],
             }
+        n_items = sum(len(getattr(extraction, field) or []) for field, _l, _n in CATEGORIES)
+        logger.debug(
+            "chunk %d pass %d: %d item(s) in %.1fs",
+            payload["chunk_index"], rnd + 1, n_items, time.perf_counter() - started,
+        )
         if rnd == 0 and self.cache is not None:
             self.cache.put(payload["chunk_hash"], extraction)
         return {"harvest": [extraction]}
@@ -256,7 +300,14 @@ class PipelineNodes:
             synthesis = self.llm.structured(MeetingSynthesis, REDUCE_SYSTEM, user, role="lead")
         except Exception as exc:  # noqa: BLE001
             synthesis = self._fallback_synthesis(state)
-            return {"synthesis": synthesis, "warnings": [f"reduce node fell back to a listing: {exc}"]}
+            summary = _error_summary(exc)
+            logger.warning("reduce node fell back to a listing: %s", summary)
+            logger.debug("reduce failure detail", exc_info=True)
+            return {"synthesis": synthesis, "warnings": [f"reduce node fell back to a listing: {summary}"]}
+        logger.info(
+            "synthesis written (%d next steps; coverage gaps: %s)",
+            len(synthesis.next_steps), ", ".join(synthesis.coverage_gaps) or "none",
+        )
         if not synthesis.title:
             synthesis.title = (plan.title if plan else "") or inv.title_hint or "Meeting"
         if not synthesis.participants and inv.speakers:
@@ -290,7 +341,9 @@ class PipelineNodes:
 
         flagged = self._flagged_categories(synthesis, signals, items)
         if not flagged:
+            logger.info("gapfill: no under-covered categories flagged; skipping")
             return {"rescued": {}, "gap_notes": []}
+        logger.info("gapfill: re-checking %s", ", ".join(sorted(flagged)))
 
         nouns = [noun for field, _l, noun in CATEGORIES if field in flagged]
         labels = [label for field, label, _n in CATEGORIES if field in flagged]
@@ -306,7 +359,10 @@ class PipelineNodes:
         try:
             evidence, _ = self.llm.tool_loop(GAP_SYSTEM, question, tools, role="lead")
         except Exception as exc:  # noqa: BLE001
-            return {"rescued": {}, "gap_notes": [], "warnings": [f"gapfill agent failed: {exc}"]}
+            summary = _error_summary(exc)
+            logger.warning("gapfill agent failed: %s", summary)
+            logger.debug("gapfill agent failure detail", exc_info=True)
+            return {"rescued": {}, "gap_notes": [], "warnings": [f"gapfill agent failed: {summary}"]}
 
         try:
             rescued_extraction = self.llm.structured(
@@ -316,15 +372,27 @@ class PipelineNodes:
                 role="lead",
             )
         except Exception as exc:  # noqa: BLE001
-            return {"rescued": {}, "gap_notes": [question], "warnings": [f"gapfill structuring failed: {exc}"]}
+            summary = _error_summary(exc)
+            logger.warning("gapfill structuring failed: %s", summary)
+            logger.debug("gapfill structuring failure detail", exc_info=True)
+            return {"rescued": {}, "gap_notes": [question], "warnings": [f"gapfill structuring failed: {summary}"]}
 
-        merged, _ = consolidate([*state.get("harvest", []), rescued_extraction])
+        merged, total = consolidate([*state.get("harvest", []), rescued_extraction])
         rescued = {
             field: len(merged.get(field) or []) - len(items.get(field) or [])
             for field, _l, _n in CATEGORIES
         }
         rescued = {k: v for k, v in rescued.items() if v > 0}
-        result: dict = {"items": merged, "gap_notes": [question]}
+        logger.info("gapfill rescued: %s", rescued or "nothing new")
+        # Keep the state coherent: the rescued extraction joins the harvest and
+        # item_count is refreshed, so the report overview, the CLI summary and
+        # the category table all agree after a rescue.
+        result: dict = {
+            "items": merged,
+            "item_count": total,
+            "harvest": [rescued_extraction],
+            "gap_notes": [question],
+        }
         if rescued:
             result["rescued"] = rescued
         if warnings:
@@ -350,7 +418,10 @@ class PipelineNodes:
     # --------------------------------------------------------------- compose
 
     def compose(self, state: MeetingState) -> dict:
-        return {"report_md": render_report(state), "report_json": render_json(state)}
+        report_md = render_report(state)
+        report_json = render_json(state)
+        logger.info("compose: report %d chars, json %d chars", len(report_md), len(report_json))
+        return {"report_md": report_md, "report_json": report_json}
 
     def route_compose(self, state: MeetingState):
         return END

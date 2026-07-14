@@ -1,6 +1,6 @@
 # 06 — Testing and verification
 
-The suite (`tests/`, 36 tests) runs the entire pipeline with **no endpoint**, by
+The suite (`tests/`, 46 tests) runs the entire pipeline with **no endpoint**, by
 injecting a fake LLM. It proves the deterministic machinery exactly and the
 model-facing control flow structurally.
 
@@ -43,8 +43,13 @@ This mirrors the rpa-code-guardian testing approach: the fake makes the model's
 - **test_llm.py** — the gateway's transient-error handling: retryable
   classification (429/504/timeouts, including down the `__cause__` chain), retry
   then success, `MeetingLLMUnavailable` after exhaustion, immediate propagation
-  of non-transient errors, HTML-page error summaries, and that a dead transport
-  aborts the structured-output method ladder instead of falling through.
+  of non-transient errors, HTML-page error summaries, that a dead transport
+  aborts the structured-output method ladder instead of falling through, and
+  that each retry emits a reviewable log record with its backoff delay.
+- **test_cli.py** — the console layer with a fake `run_pipeline` replaying a
+  realistic event sequence: the progress display and summary table render, the
+  report/JSON files are written, warnings are sanitized to one line, and
+  `--log-file` produces an audit trail with the run bookends.
 - **test_graph.py** — the full pipeline via `run_pipeline` with the fake LLM:
   - it produces a Markdown report and a valid JSON export;
   - it **runs multiple review passes** (`rounds_done >= 2`) and requests chunk
@@ -55,7 +60,11 @@ This mirrors the rpa-code-guardian testing approach: the fake makes the model's
   - a `--resume` run reuses the checkpoint thread and reproduces the report;
   - when every chunk extraction fails like a dead endpoint
     (`MeetingLLMUnavailable`), it **stops sweeping after round 0**, still
-    produces a report, and warns that the endpoint looks unhealthy.
+    produces a report, and warns that the endpoint looks unhealthy;
+  - a real pipeline run **writes the detailed log**: pass starts, the loop's
+    stop reason, and the compose summary all appear in the log file;
+  - when the gapfill agent rescues items, **`item_count` stays consistent**
+    with the category table (the rescued extraction joins the harvest).
 
 ## Verifying against a real endpoint
 
