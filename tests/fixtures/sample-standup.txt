@@ -1,0 +1,15 @@
+[00:00:01] Alice: Good morning everyone, let's start the sprint planning standup. Today we need to decide the release date for version 2.0.
+[00:00:12] Bob: Morning. Quick update from my side: the payment integration is done, but I'm blocked on the staging environment. That's a risk for the timeline.
+[00:00:25] Alice: Noted. Bob, can you file a ticket with infra about staging? Let's get that unblocked by Wednesday.
+[00:00:33] Bob: Will do. I'll open the ticket right after this call.
+[00:00:40] Carol: On the QA side, we found 12 open bugs. Three of them are critical. We need at least another week for regression testing.
+[00:00:52] Alice: Okay, that pushes us. I propose we set the 2.0 release for August 15th instead of August 1st. Does everyone agree?
+[00:01:03] Bob: Agreed, August 15th works for me.
+[00:01:05] Carol: Agreed. That gives QA the buffer we need.
+[00:01:10] Alice: Decision made then: version 2.0 ships August 15th. Carol, please send the updated test plan to the team by Friday.
+[00:01:20] Carol: Sure, I'll have the test plan out by Friday.
+[00:01:26] Dave: One question I still have: are we including the new analytics dashboard in 2.0, or pushing it to 2.1? It's not clear to me.
+[00:01:38] Alice: Good question, Dave. Let's park that and confirm with the product owner. Dave, can you follow up with Priya on the analytics scope?
+[00:01:49] Dave: Yes, I'll reach out to Priya today about the analytics dashboard scope.
+[00:01:55] Bob: Just to flag: if analytics is included, my API budget goes up about 30 percent, roughly 4000 dollars a month. We should keep that in mind.
+[00:02:07] Alice: Understood, thanks Bob. Let's wrap up. Action items: Bob files the infra ticket, Carol sends the test plan Friday, Dave checks analytics scope with Priya. Great work everyone.
