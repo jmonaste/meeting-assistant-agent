@@ -12,6 +12,7 @@ classes and functions it explains, and every non-obvious decision is justified.
 | 04 | [Multi-pass coverage](04-Multi-Pass-Coverage.md) | The heart of the tool: the map/sweep loop, loop-until-dry, deterministic de-duplication, and the agentic gap-fill rescue. |
 | 05 | [LLM gateway](05-LLM-Gateway.md) | The single point of contact with the model: structured output, the retry ladder, the JSON fallback, the tool loop, and local-model quirks. |
 | 06 | [Testing and verification](06-Testing-And-Verification.md) | The injectable fake LLM, what each fixture and test proves, and how the review loop is verified without an endpoint. |
+| 07 | [Endpoint tuning](07-Endpoint-Tuning.md) | Practical guide for slow/rate-limited endpoints: the safe baseline (`--max-concurrency 1`, smaller chunks, gateway timeout), how to measure with the log file, and how to step the settings up safely. |
 
 ## The system in one diagram
 

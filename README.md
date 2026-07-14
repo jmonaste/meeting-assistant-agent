@@ -173,6 +173,9 @@ never treated as something said in the meeting.
 
 ## Troubleshooting slow or rate-limited endpoints
 
+> Step-by-step version with measurements and a safe ramp-up procedure:
+> [docs/07-Endpoint-Tuning.md](docs/07-Endpoint-Tuning.md).
+
 Every LLM call already retries transient failures (429 rate limits, 502/503/504
 gateway errors, timeouts) with exponential backoff, and if half or more of a
 review round still fails, the agent stops sweeping, finishes the report with
