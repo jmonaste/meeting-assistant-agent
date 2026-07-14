@@ -52,9 +52,22 @@ class Settings(BaseSettings):
         "trusted local/corporate endpoint with a self-signed certificate.",
     )
     request_timeout: float = Field(
-        default=120.0,
+        default=300.0,
         alias="MEETING_REQUEST_TIMEOUT",
-        description="HTTP timeout in seconds for each LLM call (local models can be slow).",
+        description="HTTP timeout in seconds for each LLM call. Large local reasoning "
+        "models can take minutes on a full chunk; the proxy/gateway in front of the "
+        "model must allow at least this long too, or it will return 504s first.",
+    )
+    llm_retries: int = Field(
+        default=4,
+        alias="MEETING_LLM_RETRIES",
+        description="Retries per LLM call on transient endpoint errors (429 rate "
+        "limits, 502/503/504 gateway errors, timeouts), with exponential backoff.",
+    )
+    llm_retry_base_delay: float = Field(
+        default=2.0,
+        alias="MEETING_LLM_RETRY_BASE_DELAY",
+        description="Initial backoff delay in seconds; doubles on each retry, capped at 60s.",
     )
     max_tokens: int = Field(
         default=8192,

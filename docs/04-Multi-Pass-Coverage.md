@@ -32,6 +32,12 @@ return {"items": items, "item_count": count, "rounds_done": rounds_done + 1,
   (`1 + MEETING_MAX_SWEEPS`) **or** the last round added no new items
   (`count <= prev_count`). This is loop-until-dry: extra sweeps cost nothing once
   the transcript is exhausted, because a dry round terminates immediately.
+- **Endpoint health**: each failed chunk extraction records its round number in
+  the additive `failures` state key. If half or more of the last round's chunks
+  failed (sustained 429s / gateway timeouts, after the gateway's own backoff was
+  exhausted), `dispatch` stops sweeping with a warning instead of burning more
+  failing calls; the run finishes with what it has and is resumable with
+  `--resume` once the endpoint recovers.
 
 `item_count` recorded on each dispatch is the count *before* the next round's
 additions, so comparing it to the freshly consolidated count detects a dry round.

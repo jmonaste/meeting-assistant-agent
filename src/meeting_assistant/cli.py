@@ -32,8 +32,10 @@ def process(
     base_url: Annotated[Optional[str], typer.Option(help="OpenAI-compatible endpoint base URL (overrides .env).")] = None,
     worker_model: Annotated[Optional[str], typer.Option(help="Model for per-chunk extraction (overrides .env).")] = None,
     lead_model: Annotated[Optional[str], typer.Option(help="Model for planning, synthesis and sweeps (overrides .env).")] = None,
-    max_concurrency: Annotated[Optional[int], typer.Option(help="Parallel LLM calls in the map/sweep phases.")] = None,
+    max_concurrency: Annotated[Optional[int], typer.Option(help="Parallel LLM calls in the map/sweep phases. Lower to 1-2 if the endpoint returns 429/504.")] = None,
     max_sweeps: Annotated[Optional[int], typer.Option(help="Extra full-transcript coverage passes after the first (default 3).")] = None,
+    request_timeout: Annotated[Optional[float], typer.Option(help="HTTP timeout in seconds per LLM call (default 300; large local models are slow).")] = None,
+    chunk_chars: Annotated[Optional[int], typer.Option(help="Character budget per transcript chunk. Lower it if the endpoint times out on full chunks.")] = None,
     resume: Annotated[bool, typer.Option("--resume", help="Resume the previous interrupted run of this transcript.")] = False,
     no_cache: Annotated[bool, typer.Option("--no-cache", help="Ignore cached per-chunk extractions.")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show every pipeline event.")] = False,
@@ -65,6 +67,8 @@ def process(
         MEETING_LEAD_MODEL=lead_model,
         MEETING_MAX_CONCURRENCY=max_concurrency,
         MEETING_MAX_SWEEPS=max_sweeps,
+        MEETING_REQUEST_TIMEOUT=request_timeout,
+        MEETING_CHUNK_MAX_CHARS=chunk_chars,
         MEETING_USE_CACHE=False if no_cache else None,
     )
 
@@ -73,9 +77,22 @@ def process(
         f"worker: {settings.resolved_worker_model()}, lead: {settings.resolved_lead_model()}"
     )
 
-    progress = {"round_calls": 0}
+    progress = {"round_calls": 0, "line_open": False}
+
+    def _close_progress_line() -> None:
+        # The chunk counter prints with end="\r"; emit a newline before any
+        # other message so phases do not overwrite/concatenate on one line.
+        if progress["line_open"]:
+            console.print()
+            progress["line_open"] = False
 
     def on_event(node: str, payload: object) -> None:
+        if node == "extract_chunk":
+            progress["round_calls"] += 1
+            console.print(f"[cyan]review[/cyan]: {progress['round_calls']} chunk passes done", end="\r")
+            progress["line_open"] = True
+            return
+        _close_progress_line()
         if node == "ingest" and isinstance(payload, dict):
             inv = payload.get("inventory")
             if inv is not None:
@@ -83,10 +100,6 @@ def process(
                     f"[cyan]ingest[/cyan]: {len(inv.segments)} segments, {inv.total_words} words, "
                     f"format={inv.source_format}, {len(inv.chunks)} chunks"
                 )
-            return
-        if node == "extract_chunk":
-            progress["round_calls"] += 1
-            console.print(f"[cyan]review[/cyan]: {progress['round_calls']} chunk passes done", end="\r")
             return
         if node == "dispatch" and isinstance(payload, dict) and verbose:
             console.print(f"[dim]dispatch[/dim]: {payload.get('item_count', '?')} items so far")
@@ -129,7 +142,9 @@ def process(
         console.print(f"[green]JSON export written:[/green] {json_path}")
 
     for warning in state.get("warnings", []) or []:
-        console.print(f"[yellow]warning:[/yellow] {warning}")
+        # Endpoint errors can carry whole HTML pages; keep warnings to one line.
+        clean = re.sub(r"\s+", " ", str(warning)).strip()[:300]
+        console.print(f"[yellow]warning:[/yellow] {clean}")
 
     if not report_md:
         raise typer.Exit(code=1)

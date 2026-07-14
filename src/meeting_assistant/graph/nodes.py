@@ -160,13 +160,28 @@ class PipelineNodes:
         items, count = consolidate(state.get("harvest", []))
         rounds_done = state.get("rounds_done", 0)
         max_rounds = 1 + max(0, self.settings.max_sweeps)
+        inv = state["inventory"]
 
         out: dict = {"items": items, "item_count": count}
-        if rounds_done >= 1 and (rounds_done >= max_rounds or count <= prev_count):
-            out["current_chunks"] = []  # -> reduce
-            return out
-
-        inv = state["inventory"]
+        if rounds_done >= 1:
+            # Endpoint health check: if half or more of the last round's chunks
+            # failed (rate limits, gateway timeouts), further sweeps would just
+            # burn more failing calls — stop and let reduce work with what we have.
+            last_round = rounds_done - 1
+            failed_last = sum(1 for r in state.get("failures", []) if r == last_round)
+            n_chunks = len(inv.chunks)
+            if n_chunks and failed_last * 2 >= n_chunks:
+                out["current_chunks"] = []  # -> reduce
+                out["warnings"] = [
+                    f"stopped reviewing after round {last_round}: {failed_last} of "
+                    f"{n_chunks} chunk extractions failed; the endpoint looks unhealthy "
+                    "(rate limits / gateway timeouts). Fix the endpoint and re-run with "
+                    "--resume to continue this run."
+                ]
+                return out
+            if rounds_done >= max_rounds or count <= prev_count:
+                out["current_chunks"] = []  # -> reduce
+                return out
         known = render_known_items(items) if rounds_done >= 1 else ""
         context = inv.context_block()
         payloads: list[ChunkPayload] = [
@@ -209,7 +224,11 @@ class PipelineNodes:
         try:
             extraction = self.llm.structured(ChunkExtraction, system, user, role="worker")
         except Exception as exc:  # noqa: BLE001
-            return {"harvest": [ChunkExtraction()], "warnings": [f"extraction failed for chunk {payload['chunk_index']} (round {rnd}): {exc}"]}
+            return {
+                "harvest": [ChunkExtraction()],
+                "failures": [rnd],
+                "warnings": [f"extraction failed for chunk {payload['chunk_index']} (round {rnd}): {exc}"],
+            }
         if rnd == 0 and self.cache is not None:
             self.cache.put(payload["chunk_hash"], extraction)
         return {"harvest": [extraction]}

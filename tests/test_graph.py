@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
+from conftest import FakeLLM
+
 from meeting_assistant.graph.builder import run_pipeline
+from meeting_assistant.llm import MeetingLLMUnavailable
+from meeting_assistant.model.extraction import ChunkExtraction
 
 
 def _run(fake_llm, settings, sample_inventory, tmp_path, **kw):
@@ -53,3 +57,25 @@ def test_pipeline_resume_reuses_thread(fake_llm, settings, sample_inventory, tmp
     first = _run(fake_llm, settings, sample_inventory, tmp_path)
     resumed = _run(fake_llm, settings, sample_inventory, tmp_path, resume=True)
     assert resumed["report_md"] == first["report_md"]
+
+
+class _DownLLM(FakeLLM):
+    """Every chunk extraction fails like a dead endpoint (504/429 after retries)."""
+
+    def structured(self, schema, system, user, role="worker"):  # type: ignore[override]
+        if schema is ChunkExtraction:
+            self.calls.append("ChunkExtraction")
+            raise MeetingLLMUnavailable("endpoint still failing after 5 attempts: 504 Gateway Time-out")
+        return super().structured(schema, system, user, role)
+
+
+def test_pipeline_stops_sweeping_when_endpoint_is_unhealthy(settings, sample_inventory, tmp_path):
+    llm = _DownLLM(settings)
+    state = _run(llm, settings, sample_inventory, tmp_path)
+    # Round 0 fails on every chunk -> no further sweep rounds are launched.
+    assert state["rounds_done"] == 1
+    n_chunks = len(sample_inventory.chunks)
+    assert llm.calls.count("ChunkExtraction") <= n_chunks + 1  # +1 for the gapfill structuring
+    # The run still completes with a report and a clear warning.
+    assert state["report_md"]
+    assert any("endpoint looks unhealthy" in w for w in state["warnings"])

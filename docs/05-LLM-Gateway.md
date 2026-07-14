@@ -18,6 +18,23 @@ Both are configured with the shared `temperature`, `max_tokens`, timeout and TLS
 settings. `verify_ssl=false` exists only for trusted local endpoints with
 self-signed certificates.
 
+## Transient failures: retry with backoff
+
+Every invoke goes through `_invoke_with_retry()`. An error classified as
+transient by `_is_retryable()` — 429 rate limits, 502/503/504 gateway errors,
+timeouts, connection errors, matched by exception type name or message marker
+across the whole `__cause__` chain — is retried up to `MEETING_LLM_RETRIES`
+times with exponential backoff (base `MEETING_LLM_RETRY_BASE_DELAY`, doubling,
+capped at 60 s). Non-transient errors propagate immediately.
+
+When the retries are exhausted, the gateway raises `MeetingLLMUnavailable`
+(a `MeetingLLMError` subclass) with a cleaned one-line summary — gateways
+answer with whole HTML error pages, which are stripped. This distinction
+matters for the ladder below: a schema/validation failure is worth retrying
+with a more permissive output method, but a dead transport is not, so
+`MeetingLLMUnavailable` aborts the ladder instead of burning two more slow,
+failing calls per chunk.
+
 ## `structured()` — a schema-out retry ladder
 
 Local models honor structured output unevenly, so `structured()` tries three

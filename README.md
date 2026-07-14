@@ -108,8 +108,10 @@ Fill in `.env`:
 | `MEETING_WORKER_MODEL` | Model for the per-chunk map/sweep phases (e.g. `gemma`). |
 | `MEETING_LEAD_MODEL` | Model for planning/synthesis/gapfill (e.g. `gpt-oss`). |
 | `MEETING_MAX_SWEEPS` | Extra full-transcript passes after the first (default 3). |
-| `MEETING_MAX_CONCURRENCY` | Parallel LLM calls in the map/sweep phases (default 4). |
+| `MEETING_MAX_CONCURRENCY` | Parallel LLM calls in the map/sweep phases (default 4; use 1-2 for a single big local model). |
 | `MEETING_CHUNK_MAX_CHARS` | Char budget per transcript chunk (default 9000). |
+| `MEETING_REQUEST_TIMEOUT` | HTTP timeout per LLM call in seconds (default 300). |
+| `MEETING_LLM_RETRIES` | Retries per call on 429/5xx/timeouts, with exponential backoff (default 4). |
 
 Both models must support OpenAI-style **tool calling**; if a structured call
 fails, the client retries once and then falls back to JSON parsing.
@@ -152,6 +154,25 @@ The optional **context** input is background only — participant names, an agen
 prior minutes, a glossary. It is used to resolve references and acronyms; it is
 never treated as something said in the meeting.
 
+## Troubleshooting slow or rate-limited endpoints
+
+Every LLM call already retries transient failures (429 rate limits, 502/503/504
+gateway errors, timeouts) with exponential backoff, and if half or more of a
+review round still fails, the agent stops sweeping, finishes the report with
+what it has, and tells you to fix the endpoint and re-run with `--resume`
+(cached round-0 extractions are not re-paid). If you see these warnings:
+
+- **`504 Gateway Time-out`** — the *gateway in front of the model* gave up
+  before the model finished a chunk. Raise the gateway's own timeout, and/or
+  give the model less work per call: `--chunk-chars 5000`, `--max-concurrency 1`.
+  The client-side `MEETING_REQUEST_TIMEOUT` (default 300 s) must also be at
+  least as long as a real completion takes.
+- **`429 Rate limit exceeded`** — the endpoint cannot take the parallelism.
+  Lower `--max-concurrency` to 1 or 2; the backoff will absorb occasional 429s
+  but sustained ones mean the concurrency is simply too high for the server.
+- A run interrupted or degraded by endpoint problems is resumable:
+  `meeting-assistant process ... --resume` continues from the last checkpoint.
+
 ## What gets extracted
 
 Everything below, each item grounded in the transcript segments (`Sxx`) it came
@@ -175,7 +196,7 @@ from:
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 28 tests: parser, ingestion, chunker, merge, renderer, full graph (fake LLM)
+pytest          # 36 tests: parser, ingestion, chunker, merge, renderer, LLM gateway retries, full graph (fake LLM)
 ```
 
 The suite runs the entire pipeline against a bundled sample transcript using an

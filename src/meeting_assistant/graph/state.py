@@ -34,6 +34,10 @@ class MeetingState(TypedDict, total=False):
     harvest: Annotated[list[ChunkExtraction], operator.add]
     current_chunks: list["ChunkPayload"]  # payloads to extract this round
     rounds_done: int
+    # Round number of every chunk extraction that failed (endpoint errors).
+    # dispatch counts the last round's entries to detect an unhealthy endpoint
+    # and stop sweeping instead of burning more failing calls.
+    failures: Annotated[list[int], operator.add]
     items: dict[str, list]  # category -> deduped list of item models
     item_count: int  # size of `items` after the last consolidation
 
