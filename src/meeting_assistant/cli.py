@@ -182,6 +182,7 @@ def process(
     context: Annotated[Optional[str], typer.Option("--context", "-c", help="Background context: a path to a text file, or the text itself (names, agenda, prior notes).")] = None,
     output: Annotated[Path, typer.Option("--output", "-o", help="Directory where the report is written.")] = Path("out"),
     log_file: Annotated[Optional[Path], typer.Option("--log-file", help="Append the detailed run log (every LLM call, retry, cache hit and pass decision) to this file for later review.")] = None,
+    language: Annotated[Optional[str], typer.Option("--language", "-l", help="Output language for the report: 'auto' (follow the transcript), a code like 'es'/'en', or any language name. Quotes are never translated.")] = None,
     base_url: Annotated[Optional[str], typer.Option(help="OpenAI-compatible endpoint base URL (overrides .env).")] = None,
     worker_model: Annotated[Optional[str], typer.Option(help="Model for per-chunk extraction (overrides .env).")] = None,
     lead_model: Annotated[Optional[str], typer.Option(help="Model for planning, synthesis and sweeps (overrides .env).")] = None,
@@ -223,6 +224,7 @@ def process(
         MEETING_REQUEST_TIMEOUT=request_timeout,
         MEETING_CHUNK_MAX_CHARS=chunk_chars,
         MEETING_LOG_FILE=str(log_file) if log_file else None,
+        MEETING_LANGUAGE=language,
         MEETING_USE_CACHE=False if no_cache else None,
     )
     _setup_logging(settings.log_file, verbose)

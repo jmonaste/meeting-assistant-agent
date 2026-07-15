@@ -1,6 +1,6 @@
 # 06 — Testing and verification
 
-The suite (`tests/`, 46 tests) runs the entire pipeline with **no endpoint**, by
+The suite (`tests/`, 54 tests) runs the entire pipeline with **no endpoint**, by
 injecting a fake LLM. It proves the deterministic machinery exactly and the
 model-facing control flow structurally.
 
@@ -50,6 +50,11 @@ This mirrors the rpa-code-guardian testing approach: the fake makes the model's
   realistic event sequence: the progress display and summary table render, the
   report/JSON files are written, warnings are sanitized to one line, and
   `--log-file` produces an audit trail with the run bookends.
+- **test_language.py** — the output-language rule (`auto` follows the
+  transcript, codes map to names, quotes are never translated), that every
+  generating prompt in a pipeline run carries it, and the bilingual cue scan
+  against a Spanish fixture (`sample-reunion-es.txt`) without regressing the
+  English one.
 - **test_graph.py** — the full pipeline via `run_pipeline` with the fake LLM:
   - it produces a Markdown report and a valid JSON export;
   - it **runs multiple review passes** (`rounds_done >= 2`) and requests chunk

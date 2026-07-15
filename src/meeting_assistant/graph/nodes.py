@@ -42,6 +42,33 @@ logger = logging.getLogger(__name__)
 _FIELD_BY_NAME = {field: field for field, _l, _n in CATEGORIES}
 _FIELD_BY_LABEL = {label.lower(): field for field, label, _n in CATEGORIES}
 
+_LANGUAGE_NAMES = {
+    "es": "Spanish", "en": "English", "fr": "French", "de": "German",
+    "it": "Italian", "pt": "Portuguese", "ca": "Catalan", "nl": "Dutch",
+}
+
+
+def language_instruction(language: str) -> str:
+    """The output-language rule appended to every generating prompt.
+
+    'auto' pins the output to the transcript's own language — without an
+    explicit rule, a model can drift into English on non-English meetings.
+    Verbatim quotes are never translated in either mode, because they are the
+    grounding evidence.
+    """
+    lang = (language or "auto").strip().lower()
+    if lang in ("", "auto"):
+        return (
+            "OUTPUT LANGUAGE: write every output field (prose sections and item texts) "
+            "in the SAME language the meeting was held in. Keep verbatim quotes exactly "
+            "as spoken."
+        )
+    name = _LANGUAGE_NAMES.get(lang, language.strip())
+    return (
+        f"OUTPUT LANGUAGE: write every output field (prose sections and item texts) "
+        f"in {name}. Keep verbatim quotes exactly as spoken, untranslated."
+    )
+
 PLAN_SYSTEM = """\
 You are an expert meeting analyst. You are given an overview of a meeting
 transcript (participants, size, detected signal cues) and any background the
@@ -100,6 +127,7 @@ class PipelineNodes:
         self.settings = settings
         self.llm = llm or MeetingLLM(settings)
         self.cache: ExtractionCache | None = None
+        self.lang_note = language_instruction(settings.language)
 
     # ---------------------------------------------------------------- ingest
 
@@ -142,7 +170,7 @@ class PipelineNodes:
             parts.append("DETERMINISTIC SIGNAL CUES:\n" + signal_summary)
         user = "\n\n".join(parts)
         try:
-            plan = self.llm.structured(MeetingPlan, PLAN_SYSTEM, user, role="lead")
+            plan = self.llm.structured(MeetingPlan, PLAN_SYSTEM + "\n\n" + self.lang_note, user, role="lead")
         except Exception as exc:  # noqa: BLE001 - degrade, don't fail the run
             plan = MeetingPlan(
                 title=inv.title_hint or "Meeting",
@@ -253,7 +281,7 @@ class PipelineNodes:
             parts.append("ALREADY CAPTURED ACROSS THE WHOLE MEETING:\n" + payload["known_items"])
             parts.append("List ONLY items from the excerpt above that are missing from that list. Empty lists if nothing is new.")
         user = "\n\n".join(parts)
-        system = SWEEP_SYSTEM if rnd >= 1 else MAP_SYSTEM
+        system = (SWEEP_SYSTEM if rnd >= 1 else MAP_SYSTEM) + "\n\n" + self.lang_note
         try:
             extraction = self.llm.structured(ChunkExtraction, system, user, role="worker")
         except Exception as exc:  # noqa: BLE001
@@ -297,7 +325,7 @@ class PipelineNodes:
         parts.append("Category keys: " + ", ".join(field for field, _l, _n in CATEGORIES))
         user = "\n\n".join(parts)
         try:
-            synthesis = self.llm.structured(MeetingSynthesis, REDUCE_SYSTEM, user, role="lead")
+            synthesis = self.llm.structured(MeetingSynthesis, REDUCE_SYSTEM + "\n\n" + self.lang_note, user, role="lead")
         except Exception as exc:  # noqa: BLE001
             synthesis = self._fallback_synthesis(state)
             summary = _error_summary(exc)
@@ -357,7 +385,7 @@ class PipelineNodes:
         )
         warnings: list[str] = []
         try:
-            evidence, _ = self.llm.tool_loop(GAP_SYSTEM, question, tools, role="lead")
+            evidence, _ = self.llm.tool_loop(GAP_SYSTEM + "\n\n" + self.lang_note, question, tools, role="lead")
         except Exception as exc:  # noqa: BLE001
             summary = _error_summary(exc)
             logger.warning("gapfill agent failed: %s", summary)
@@ -367,7 +395,7 @@ class PipelineNodes:
         try:
             rescued_extraction = self.llm.structured(
                 ChunkExtraction,
-                GAP_STRUCT_SYSTEM,
+                GAP_STRUCT_SYSTEM + "\n\n" + self.lang_note,
                 f"EVIDENCE GATHERED FROM THE TRANSCRIPT (segments read: {', '.join(recorder) or 'none'}):\n{evidence}",
                 role="lead",
             )

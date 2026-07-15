@@ -40,9 +40,11 @@ class FakeLLM(MeetingLLM):
         self.settings = settings
         self._models = {}
         self.calls: list[str] = []
+        self.systems: list[str] = []  # system prompts received, for prompt-content tests
 
     def structured(self, schema, system, user, role="worker"):  # type: ignore[override]
         self.calls.append(schema.__name__)
+        self.systems.append(system)
         if schema is MeetingPlan:
             return MeetingPlan(
                 title="Sprint Planning Standup",

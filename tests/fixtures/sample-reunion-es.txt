@@ -1,0 +1,15 @@
+[00:00:01] Ana: Buenos días a todos, empezamos la reunión de planificación. Hoy tenemos que decidir la fecha de lanzamiento de la versión 2.0.
+[00:00:12] Luis: Buenas. Por mi parte, la integración de pagos está terminada, pero estoy bloqueado con el entorno de staging. Es un riesgo para el plazo.
+[00:00:25] Ana: Anotado. Luis, ¿puedes abrir un ticket con infraestructura? Hay que desbloquearlo antes del miércoles.
+[00:00:33] Luis: Me encargo. Abro el ticket después de esta llamada.
+[00:00:40] Marta: En QA encontramos 12 bugs abiertos, tres de ellos críticos. Necesitamos una semana más de pruebas de regresión.
+[00:00:52] Ana: De acuerdo, eso nos retrasa. Propongo mover el lanzamiento al 15 de agosto en lugar del 1 de agosto. ¿Estamos todos de acuerdo?
+[00:01:03] Luis: De acuerdo, el 15 de agosto me va bien.
+[00:01:05] Marta: Acordado. Nos da el margen que QA necesita.
+[00:01:10] Ana: Decidido entonces: la versión 2.0 sale el 15 de agosto. Marta, por favor envía el plan de pruebas actualizado al equipo el viernes.
+[00:01:20] Marta: Sí, enviaré el plan de pruebas el viernes.
+[00:01:26] Diego: Tengo una duda pendiente: ¿incluimos el nuevo panel de analítica en la 2.0 o lo pasamos a la 2.1? No me queda claro.
+[00:01:38] Ana: Buena pregunta, Diego. Dejémoslo aparcado y confirmemos con producto. Diego, habla con Priya sobre el alcance de la analítica.
+[00:01:49] Diego: Vale, hablo hoy con Priya sobre el alcance del panel de analítica.
+[00:01:55] Luis: Un aviso: si entra la analítica, el presupuesto de la API sube un 30 por ciento, unos 4000 euros al mes. Hay que tenerlo en cuenta.
+[00:02:07] Ana: Entendido, gracias Luis. Cerramos. Acciones: Luis abre el ticket de infraestructura, Marta envía el plan el viernes, Diego confirma el alcance con Priya. Buen trabajo.

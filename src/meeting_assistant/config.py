@@ -117,6 +117,13 @@ class Settings(BaseSettings):
         description="Path of a file to append the detailed run log to (every LLM call, "
         "retry, cache hit and pass decision, with timestamps). Empty disables file logging.",
     )
+    language: str = Field(
+        default="auto",
+        alias="MEETING_LANGUAGE",
+        description="Output language for the report: 'auto' (follow the transcript's "
+        "language), a code like 'es'/'en', or any language name. Verbatim quotes are "
+        "never translated.",
+    )
 
     def resolved_worker_model(self) -> str:
         return self.worker_model or self.lead_model or "gpt-oss"
