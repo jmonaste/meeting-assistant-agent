@@ -113,6 +113,7 @@ Fill in `.env`:
 | `MEETING_REQUEST_TIMEOUT` | HTTP timeout per LLM call in seconds (default 300). |
 | `MEETING_LLM_RETRIES` | Retries per call on 429/5xx/timeouts, with exponential backoff (default 4). |
 | `MEETING_LOG_FILE` | File to append the detailed run log to (same as `--log-file`). |
+| `MEETING_LANGUAGE` | Report language: `auto` (follow the transcript), a code (`es`, `en`, ...) or a name. |
 
 Both models must support OpenAI-style **tool calling**; if a structured call
 fails, the client retries once and then falls back to JSON parsing.
@@ -130,6 +131,7 @@ meeting-assistant process meeting.vtt --context "Priya is the PO. Project Phoeni
 meeting-assistant process meeting.srt --context ./agenda.md -o out/
 
 # useful flags
+meeting-assistant process ... --language es      # force the report language (default: follow the transcript)
 meeting-assistant process ... --max-sweeps 5     # review even more thoroughly
 meeting-assistant process ... --log-file run.log # full call/retry/decision audit trail
 meeting-assistant process ... --resume           # continue an interrupted run
@@ -170,6 +172,16 @@ Format is auto-detected; no flag needed.
 The optional **context** input is background only — participant names, an agenda,
 prior minutes, a glossary. It is used to resolve references and acronyms; it is
 never treated as something said in the meeting.
+
+### Language
+
+By default the report is written in **the language the meeting was held in**
+(every prompt carries an explicit output-language rule, so the model does not
+drift into English on non-English meetings). Force a language with
+`--language es`, `--language en`, or any language name / `MEETING_LANGUAGE`.
+Verbatim quotes are never translated — they are the grounding evidence. The
+deterministic cue scan that backs the coverage check is bilingual
+(English + Spanish).
 
 ## Troubleshooting slow or rate-limited endpoints
 
@@ -216,7 +228,7 @@ from:
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 46 tests: parser, ingestion, chunker, merge, renderer, LLM gateway retries, CLI, full graph (fake LLM)
+pytest          # 54 tests: parser, ingestion, chunker, merge, renderer, LLM gateway retries, CLI, language, full graph (fake LLM)
 ```
 
 The suite runs the entire pipeline against a bundled sample transcript using an

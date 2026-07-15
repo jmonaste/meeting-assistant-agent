@@ -65,7 +65,10 @@ A set of cheap regexes counts concrete cues per category: action verbs
 (`I'll`, `we need to`, `assign`), decision phrases (`we agreed`, `let's go with`),
 lines ending in `?`, dates and deadlines (weekdays, months, `EOD`, `Q3`,
 `by Friday`, ISO dates), numbers and money, and risk words. Each hit is anchored
-to its segment id.
+to its segment id. The patterns are **bilingual (English + Spanish)** — `me
+encargo`, `acordamos`, `el viernes`, `riesgo`, `¿...?`, euro amounts — because a
+cue scan that only knows one language silently under-counts meetings held in
+the other, which would weaken the coverage check that feeds the gapfill agent.
 
 The scan is **not** an extractor — its phrasing is too fuzzy to produce finished
 items. It is a coverage signal: `gapfill` compares the cue count for a category
