@@ -21,3 +21,12 @@ out/
 
 # OS
 .DS_Store
+
+# Web UI data (meeting-assistant serve)
+meeting-data/
+
+# Deployment: never commit site-specific endpoints, hosts or wheels
+deploy/openshift/config.env
+wheelhouse/*
+!wheelhouse/README.md
+build.tar

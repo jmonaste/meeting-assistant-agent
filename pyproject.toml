@@ -16,6 +16,11 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "rich>=15.0.0",
     "typer>=0.26.7",
+    # web UI (meeting-assistant serve)
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "markdown-it-py>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -34,4 +39,4 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-meeting_assistant = ["py.typed"]
+meeting_assistant = ["py.typed", "web/static/*"]

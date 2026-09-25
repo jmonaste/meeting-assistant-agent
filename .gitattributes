@@ -1,0 +1,4 @@
+# Shell scripts and the Dockerfile run inside a Linux container: keep LF even
+# when the repository is checked out (or archived) on Windows.
+*.sh       text eol=lf
+Dockerfile text eol=lf

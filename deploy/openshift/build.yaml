@@ -1,0 +1,53 @@
+# Image build inside the cluster: upload the source from your machine with
+#   oc start-build meeting-assistant --from-repo=. --follow
+# and OpenShift builds the Dockerfile and pushes to the ImageStream below.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: meeting-assistant
+  labels:
+    app: meeting-assistant
+spec:
+  lookupPolicy:
+    local: true  # lets the Deployment refer to the image simply as meeting-assistant:latest
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: meeting-assistant
+  labels:
+    app: meeting-assistant
+spec:
+  runPolicy: Serial
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+      # Uncomment what your network needs (see docs/08-Web-UI-And-OpenShift.md).
+      # buildArgs:
+      #   - name: PIP_INDEX_URL
+      #     value: https://artifactory.example.com/api/pypi/pypi/simple
+      #   - name: PIP_TRUSTED_HOST
+      #     value: artifactory.example.com
+      #   - name: HTTPS_PROXY
+      #     value: http://proxy.example.com:8080
+      #
+      # If the cluster cannot pull registry.access.redhat.com, build on top of
+      # the Python image the cluster already has (oc get istag -n openshift | grep python):
+      # from:
+      #   kind: ImageStreamTag
+      #   namespace: openshift
+      #   name: python:3.12-ubi9
+  output:
+    to:
+      kind: ImageStreamTag
+      name: meeting-assistant:latest
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

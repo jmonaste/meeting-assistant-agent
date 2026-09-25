@@ -25,3 +25,15 @@ jobs:
           pip install -e ".[dev]"
       - name: Test
         run: pytest -q
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container image
+        run: docker build -t meeting-assistant:ci .
+      - name: Smoke test as an arbitrary UID (like OpenShift)
+        run: |
+          docker run -d --name app --user 1000650000:0 -p 8080:8080 meeting-assistant:ci
+          for i in $(seq 1 30); do curl -fsS localhost:8080/healthz && exit 0; sleep 1; done
+          docker logs app; exit 1

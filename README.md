@@ -142,6 +142,21 @@ meeting-assistant process ... -v                 # mirror info-level log events 
 Outputs land in `out/` as `<Meeting>-Report.md` and `<Meeting>-Report.json`.
 The Markdown drops straight into any Obsidian vault.
 
+### Web UI
+
+The same pipeline behind a small browser UI: upload a transcript, watch each
+review pass fill in, read the rendered report, download `.md`/`.json`, and
+resume a run that failed or was interrupted.
+
+```bash
+meeting-assistant serve          # http://127.0.0.1:8080  (same .env as the CLI)
+```
+
+Runs are background jobs kept on disk (`./meeting-data`), so closing the tab
+loses nothing. A `Dockerfile` and OpenShift manifests (`deploy/openshift/`)
+package it for a cluster, reached with `oc port-forward`; see
+[docs/08-Web-UI-And-OpenShift.md](docs/08-Web-UI-And-OpenShift.md).
+
 ### Following and reviewing a run
 
 The console shows a live progress view: one bar per review pass (with the
@@ -228,7 +243,7 @@ from:
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 54 tests: parser, ingestion, chunker, merge, renderer, LLM gateway retries, CLI, language, full graph (fake LLM)
+pytest          # parser, ingestion, chunker, merge, renderer, LLM gateway retries, CLI, language, web UI, full graph (fake LLM)
 ```
 
 The suite runs the entire pipeline against a bundled sample transcript using an
@@ -248,6 +263,8 @@ src/meeting_assistant/
   model/               # transcript IR + LLM structured-output schemas
   graph/               # LangGraph state, nodes, merge/dedup, builder, cache
   render/              # deterministic Markdown + JSON assembly, style lint
-  cli.py               # typer entrypoint (meeting-assistant process)
+  web/                 # browser UI: background job queue + FastAPI app + single page
+  cli.py               # typer entrypoint (meeting-assistant process | serve)
+deploy/                # container entrypoint + OpenShift manifests
 tests/                 # sample transcript + fake-LLM pipeline tests
 ```

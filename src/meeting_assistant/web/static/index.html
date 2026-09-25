@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meeting Assistant</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #dfe3ea;
+  --accent: #2f5bd3; --accent-soft: #e8eefc; --ok: #1f7a4a; --ok-soft: #e3f4ea;
+  --warn: #9a5b00; --warn-soft: #fdf1dc; --err: #b3261e; --err-soft: #fbe7e5;
+  --code: #f1f3f6; --shadow: 0 1px 2px rgba(20, 30, 50, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171d; --panel: #1b1f27; --text: #e4e7ee; --muted: #9aa3b4; --line: #2c323d;
+    --accent: #7ea2ff; --accent-soft: #232d45; --ok: #6fcf97; --ok-soft: #1c3326;
+    --warn: #f2b45a; --warn-soft: #3a2e1a; --err: #ff8a80; --err-soft: #3d2220;
+    --code: #232833; --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+header .version { color: var(--muted); font-size: 12px; }
+.endpoint { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  color: var(--muted); font-size: 12px; }
+.endpoint code { background: var(--code); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+main { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 16px; padding: 16px 20px;
+  max-width: 1500px; margin: 0 auto; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: var(--shadow); padding: 16px; min-width: 0; }
+.card + .card { margin-top: 16px; }
+h2 { font-size: 14px; margin: 0 0 12px; font-weight: 600; }
+label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+input[type=text], input[type=number], select, textarea {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--text); font: inherit; }
+textarea { resize: vertical; min-height: 64px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.drop { border: 1.5px dashed var(--line); border-radius: 8px; padding: 18px; text-align: center;
+  color: var(--muted); cursor: pointer; transition: border-color .15s, background .15s; }
+.drop.over, .drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+.drop strong { color: var(--text); word-break: break-all; }
+.linkish { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; font: inherit; font-size: 12px; }
+button.primary, button.secondary, a.secondary {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 6px;
+  font: inherit; font-weight: 500; cursor: pointer; text-decoration: none; }
+button.primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+button.primary:disabled { opacity: .5; cursor: default; }
+button.secondary, a.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+button.secondary:hover, a.secondary:hover { border-color: var(--accent); }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.submit { margin-top: 16px; display: flex; align-items: center; gap: 12px; }
+.msg { font-size: 12px; }
+.msg.err { color: var(--err); }
+.jobs { list-style: none; margin: 0; padding: 0; }
+.jobs li { padding: 9px 10px; border-radius: 6px; cursor: pointer; display: grid;
+  grid-template-columns: 1fr auto; gap: 2px 10px; border: 1px solid transparent; }
+.jobs li:hover { background: var(--accent-soft); }
+.jobs li.sel { border-color: var(--accent); background: var(--accent-soft); }
+.jobs .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobs .meta { color: var(--muted); font-size: 12px; grid-column: 1 / -1; }
+.badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap;
+  background: var(--code); color: var(--muted); align-self: center; }
+.badge.done { background: var(--ok-soft); color: var(--ok); }
+.badge.running, .badge.queued { background: var(--accent-soft); color: var(--accent); }
+.badge.failed { background: var(--err-soft); color: var(--err); }
+.badge.interrupted, .badge.cancelled { background: var(--warn-soft); color: var(--warn); }
+.empty { color: var(--muted); font-size: 13px; padding: 24px 8px; text-align: center; }
+.detail-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.detail-head h2 { font-size: 17px; margin: 0; flex: 1; min-width: 200px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.facts { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.facts b { color: var(--text); font-weight: 500; }
+.steps { display: flex; gap: 6px; margin: 16px 0 8px; flex-wrap: wrap; }
+.step { flex: 1 1 0; min-width: 64px; font-size: 12px; color: var(--muted); padding-top: 6px;
+  border-top: 3px solid var(--line); }
+.step.done { border-color: var(--ok); color: var(--text); }
+.step.now { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.passes { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.passes td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.passes td.num { text-align: right; white-space: nowrap; color: var(--muted); }
+.bar { height: 6px; background: var(--code); border-radius: 3px; overflow: hidden; min-width: 80px; }
+.bar > span { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.bar.full > span { background: var(--ok); }
+.notice { border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 12px; }
+.notice.err { background: var(--err-soft); color: var(--err); }
+.notice.warn { background: var(--warn-soft); color: var(--warn); }
+.notice.ok { background: var(--ok-soft); color: var(--ok); }
+.notice ul { margin: 4px 0 0; padding-left: 18px; }
+.counts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.counts span { background: var(--code); border-radius: 4px; padding: 2px 8px; font-size: 12px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-top: 18px; }
+.tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px;
+  font: inherit; color: var(--muted); cursor: pointer; margin-bottom: -1px; }
+.tabs button.on { color: var(--text); border-color: var(--accent); font-weight: 500; }
+.pane { padding-top: 14px; }
+pre.log { background: var(--code); padding: 12px; border-radius: 6px; font-size: 11.5px; line-height: 1.45;
+  overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word; margin: 0; }
+.report { overflow-wrap: anywhere; }
+.report h1 { font-size: 20px; margin: 0 0 8px; }
+.report h2 { font-size: 16px; margin: 26px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.report table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0; display: block; overflow-x: auto; }
+.report th, .report td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+.report th { background: var(--code); font-weight: 600; }
+.report code { background: var(--code); padding: 1px 4px; border-radius: 3px; }
+.report blockquote { margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.report a { color: var(--accent); }
+.muted { color: var(--muted); }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Meeting Assistant</h1>
+  <span class="version" id="version"></span>
+  <div class="endpoint">
+    <span>Endpoint <code id="ep-url">…</code></span>
+    <span>worker <code id="ep-worker">…</code> lead <code id="ep-lead">…</code></span>
+    <button class="secondary" id="ep-check" type="button">Test connection</button>
+  </div>
+</header>
+<div id="ep-result" class="hidden" style="padding: 0 20px; cursor: pointer" title="Click to dismiss"></div>
+
+<main>
+  <section>
+    <form class="card" id="form">
+      <h2>New analysis</h2>
+      <div class="drop" id="drop" tabindex="0">
+        <div id="drop-text">Drop a transcript here or <u>choose a file</u><br>
+          <span class="muted" style="font-size:12px">.vtt, .srt, .txt — Teams/Zoom captions or plain dialogue</span></div>
+        <input type="file" id="file" name="transcript" accept=".vtt,.srt,.txt,.md,text/*" hidden>
+      </div>
+      <button type="button" class="linkish" id="paste-toggle" style="margin-top:8px">Paste the text instead</button>
+      <textarea id="paste" name="transcript_text" class="hidden" rows="8"
+        placeholder="Alice: Let's start with the release date…"></textarea>
+
+      <label for="context">Context (optional) — participants, agenda, acronyms</label>
+      <textarea id="context" name="context" rows="3"
+        placeholder="Priya is the PO. Project Phoenix is the mobile app."></textarea>
+
+      <div class="row">
+        <div>
+          <label for="language">Report language</label>
+          <select id="language" name="language">
+            <option value="">Default</option>
+            <option value="auto">Same as the meeting</option>
+            <option value="es">Spanish</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div>
+          <label for="max_sweeps">Extra review passes</label>
+          <input type="number" id="max_sweeps" name="max_sweeps" min="0" max="10" placeholder="default">
+        </div>
+      </div>
+
+      <details>
+        <summary>Endpoint tuning</summary>
+        <div class="row">
+          <div>
+            <label for="max_concurrency">Parallel LLM calls</label>
+            <input type="number" id="max_concurrency" name="max_concurrency" min="1" max="16" placeholder="default">
+          </div>
+          <div>
+            <label for="chunk_chars">Chunk size (chars)</label>
+            <input type="number" id="chunk_chars" name="chunk_chars" min="1000" step="500" placeholder="default">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="worker_model">Worker model</label>
+            <input type="text" id="worker_model" name="worker_model" placeholder="default">
+          </div>
+          <div>
+            <label for="lead_model">Lead model</label>
+            <input type="text" id="lead_model" name="lead_model" placeholder="default">
+          </div>
+        </div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Seeing 429 or 504 warnings? Use 1 parallel call and
+          about 5000 chars per chunk.</p>
+      </details>
+
+      <div class="submit">
+        <button class="primary" type="submit" id="submit">Analyze</button>
+        <span class="msg" id="form-msg"></span>
+      </div>
+    </form>
+
+    <div class="card">
+      <h2>Analyses</h2>
+      <ul class="jobs" id="jobs"></ul>
+      <div class="empty hidden" id="jobs-empty">No analyses yet.</div>
+    </div>
+  </section>
+
+  <section class="card" id="detail">
+    <div class="empty" id="detail-empty">Upload a transcript to start, or pick an analysis from the list.</div>
+    <div id="detail-body" class="hidden">
+      <div class="detail-head">
+        <h2 id="d-title"></h2>
+        <span class="badge" id="d-status"></span>
+      </div>
+      <div class="facts" id="d-facts"></div>
+      <div class="actions" style="margin-top:12px">
+        <a class="secondary hidden" id="d-md" href="#">Download .md</a>
+        <a class="secondary hidden" id="d-json" href="#">Download .json</a>
+        <button class="secondary hidden" id="d-resume" type="button">Resume</button>
+        <button class="secondary hidden" id="d-cancel" type="button">Cancel</button>
+        <button class="secondary hidden" id="d-delete" type="button">Delete</button>
+      </div>
+      <div class="steps" id="d-steps"></div>
+      <table class="passes" id="d-passes"></table>
+      <div id="d-notices"></div>
+      <div class="counts" id="d-counts"></div>
+
+      <div class="tabs" id="tabs">
+        <button type="button" data-tab="report" class="on">Report</button>
+        <button type="button" data-tab="log">Run log</button>
+        <button type="button" data-tab="transcript">Transcript</button>
+      </div>
+      <div class="pane" id="pane-report"><div class="report" id="report"></div></div>
+      <div class="pane hidden" id="pane-log"><pre class="log" id="log"></pre></div>
+      <div class="pane hidden" id="pane-transcript"><pre class="log" id="transcript"></pre></div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const PHASES = [
+  ["ingest", "Ingest"], ["plan", "Plan"], ["review", "Review passes"],
+  ["reduce", "Synthesis"], ["gapfill", "Gap-fill"], ["compose", "Compose"],
+];
+const STATUS_LABEL = {
+  queued: "Queued", running: "Running", done: "Done", failed: "Failed",
+  interrupted: "Interrupted", cancelled: "Cancelled",
+};
+let selected = null, current = null, tab = "report", reportFor = null, detailTimer = null;
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function when(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short" }) + " " +
+    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+function duration(job) {
+  if (!job.started) return "";
+  const secs = Math.max(0, Math.round((job.finished || Date.now() / 1000) - job.started));
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return m ? `${m} min ${String(s).padStart(2, "0")} s` : `${s} s`;
+}
+async function api(path, opts = {}) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (_) {}
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  const type = res.headers.get("content-type") || "";
+  return type.includes("json") ? res.json() : res.text();
+}
+
+// ---------------------------------------------------------------- endpoint
+async function loadConfig() {
+  try {
+    const c = await api("/api/config");
+    $("version").textContent = "v" + c.version;
+    $("ep-url").textContent = c.base_url;
+    $("ep-worker").textContent = c.worker_model;
+    $("ep-lead").textContent = c.lead_model;
+    $("max_sweeps").placeholder = `default ${c.max_sweeps}`;
+    $("max_concurrency").placeholder = `default ${c.max_concurrency}`;
+    $("chunk_chars").placeholder = `default ${c.chunk_max_chars}`;
+    $("worker_model").placeholder = c.worker_model;
+    $("lead_model").placeholder = c.lead_model;
+    $("language").options[0].textContent = `Default (${c.language})`;
+  } catch (e) { $("ep-url").textContent = "unavailable"; }
+}
+$("ep-check").onclick = async () => {
+  const box = $("ep-result"), btn = $("ep-check");
+  btn.disabled = true; btn.textContent = "Testing…";
+  try {
+    const r = await api("/api/llm-check");
+    const lines = [];
+    if (r.ok) {
+      lines.push(`Reachable: ${esc(r.url)}` + (r.elapsed_ms != null ? ` (${r.elapsed_ms} ms)` : ""));
+      if (r.models && r.models.length) lines.push("Models: " + r.models.map(esc).join(", "));
+    } else {
+      lines.push(`Not reachable: ${esc(r.url)}`);
+    }
+    if (r.error) lines.push(esc(r.error));
+    if (r.hint) lines.push(esc(r.hint));
+    const cls = r.ok ? (r.hint ? "warn" : "ok") : "err";
+    box.innerHTML = `<div class="notice ${cls}">${lines.join("<br>")}</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="notice err">${esc(e.message)}</div>`;
+  }
+  box.classList.remove("hidden");
+  btn.disabled = false; btn.textContent = "Test connection";
+};
+$("ep-result").onclick = () => $("ep-result").classList.add("hidden");
+
+// ---------------------------------------------------------------- form
+const drop = $("drop"), fileInput = $("file");
+function showFile() {
+  const f = fileInput.files[0];
+  $("drop-text").innerHTML = f
+    ? `<strong>${esc(f.name)}</strong><br><span class="muted" style="font-size:12px">${(f.size / 1024).toFixed(1)} KB — click to change</span>`
+    : 'Drop a transcript here or <u>choose a file</u>';
+}
+drop.onclick = () => fileInput.click();
+drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } };
+fileInput.onchange = showFile;
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  if (e.dataTransfer.files.length) { fileInput.files = e.dataTransfer.files; showFile(); }
+};
+$("paste-toggle").onclick = () => {
+  const hide = !$("paste").classList.toggle("hidden");
+  drop.classList.toggle("hidden", hide);
+  $("paste-toggle").textContent = hide ? "Upload a file instead" : "Paste the text instead";
+};
+$("form").onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = $("form-msg"), btn = $("submit");
+  const usingPaste = !$("paste").classList.contains("hidden");
+  const data = new FormData($("form"));
+  if (usingPaste) data.delete("transcript"); else data.delete("transcript_text");
+  if (!usingPaste && !fileInput.files.length) { msg.className = "msg err"; msg.textContent = "Choose a transcript file first."; return; }
+  if (usingPaste && !$("paste").value.trim()) { msg.className = "msg err"; msg.textContent = "Paste the transcript text first."; return; }
+  btn.disabled = true; msg.className = "msg"; msg.textContent = "Uploading…";
+  try {
+    const job = await api("/api/jobs", { method: "POST", body: data });
+    msg.textContent = "";
+    fileInput.value = ""; showFile(); $("paste").value = "";
+    await loadJobs();
+    select(job.id);
+  } catch (err) {
+    msg.className = "msg err"; msg.textContent = err.message;
+  } finally { btn.disabled = false; }
+};
+
+// ---------------------------------------------------------------- job list
+async function loadJobs() {
+  let jobs = [];
+  try { jobs = await api("/api/jobs"); } catch (_) { return; }
+  $("jobs-empty").classList.toggle("hidden", jobs.length > 0);
+  $("jobs").innerHTML = jobs.map((j) => `
+    <li data-id="${esc(j.id)}" class="${j.id === selected ? "sel" : ""}">
+      <span class="name">${esc(j.title || j.transcript_name)}</span>
+      <span class="badge ${esc(j.status)}">${esc(STATUS_LABEL[j.status] || j.status)}</span>
+      <span class="meta">${esc(j.title ? j.transcript_name + " · " : "")}${esc(when(j.created))}${j.started ? " · " + esc(duration(j)) : ""}</span>
+    </li>`).join("");
+  for (const li of $("jobs").children) li.onclick = () => select(li.dataset.id);
+}
+
+// ---------------------------------------------------------------- job detail
+function select(id) {
+  selected = id; reportFor = null;
+  history.replaceState(null, "", id ? "#job=" + id : "#");
+  for (const li of $("jobs").children) li.classList.toggle("sel", li.dataset.id === id);
+  refreshDetail();
+}
+function setTab(name) {
+  tab = name;
+  for (const b of $("tabs").children) b.classList.toggle("on", b.dataset.tab === name);
+  for (const p of ["report", "log", "transcript"]) $("pane-" + p).classList.toggle("hidden", p !== name);
+  loadTab();
+}
+for (const b of $("tabs").children) b.onclick = () => setTab(b.dataset.tab);
+
+async function loadTab() {
+  if (!current) return;
+  const id = current.id;
+  if (tab === "report") {
+    if (!current.report_md) {
+      $("report").innerHTML = `<p class="muted">${current.status === "done" ? "No report was produced." : "The report appears here when the analysis finishes."}</p>`;
+      reportFor = null;
+    } else if (reportFor !== id) {
+      $("report").innerHTML = await api(`/api/jobs/${id}/report?format=html`);
+      reportFor = id;
+    }
+  } else if (tab === "log") {
+    const pre = $("log"), atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+    pre.textContent = (await api(`/api/jobs/${id}/log?lines=400`)) || "No log yet.";
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+  } else if (tab === "transcript" && $("transcript").dataset.for !== id) {
+    $("transcript").textContent = await api(`/api/jobs/${id}/transcript`);
+    $("transcript").dataset.for = id;
+  }
+}
+
+function renderSteps(j) {
+  const order = PHASES.map((p) => p[0]);
+  let at = j.phase ? order.indexOf(j.phase) : -1;
+  if (j.status === "queued") at = -1;
+  const finished = j.status === "done";
+  $("d-steps").innerHTML = PHASES.map(([key, label], i) => {
+    let cls = "";
+    if (finished || (at >= 0 && i < at) || (j.status === "running" && at === -1 && j.passes.length && i < 2)) cls = "done";
+    if (j.status === "running" && i === at) cls = "now";
+    if (key === "review" && j.passes.length) label += ` (${j.passes.length}/${j.max_passes || "?"})`;
+    return `<div class="step ${cls}">${esc(label)}</div>`;
+  }).join("");
+}
+function renderPasses(j) {
+  if (!j.passes.length) { $("d-passes").innerHTML = ""; return; }
+  $("d-passes").innerHTML = j.passes.map((p, i) => {
+    const last = i === j.passes.length - 1 && p.items_after == null;
+    const done = last ? j.chunks_done : p.chunks;
+    const pct = p.chunks ? Math.min(100, Math.round((done / p.chunks) * 100)) : 0;
+    const kind = p.kind === "initial" ? "Initial extraction" : "Sweep for missed items";
+    const items = p.items_after == null ? "" : `${p.items_after} items (+${p.new_items})`;
+    return `<tr><td style="white-space:nowrap">Pass ${p.number} · ${kind}</td>
+      <td style="width:40%"><div class="bar ${pct === 100 ? "full" : ""}"><span style="width:${pct}%"></span></div></td>
+      <td class="num">${done}/${p.chunks}</td><td class="num">${esc(items)}</td></tr>`;
+  }).join("");
+}
+function renderNotices(j) {
+  const out = [];
+  if (j.error) out.push(`<div class="notice err">${esc(j.error)}${j.status !== "running" && ["failed", "interrupted", "cancelled"].includes(j.status) ? "<br>Fix the cause and press Resume: finished steps are not repeated." : ""}</div>`);
+  if (j.cancel_requested) out.push(`<div class="notice warn">Cancelling after the current LLM call finishes…</div>`);
+  const warns = j.status === "running" ? j.live_warnings : (j.warnings.length ? j.warnings : j.live_warnings);
+  if (warns && warns.length) {
+    out.push(`<div class="notice warn">${j.status === "running" ? "Endpoint warnings" : "Warnings"}<ul>${warns.slice(-8).map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>`);
+  }
+  if (j.rescued && Object.keys(j.rescued).length) {
+    out.push(`<div class="notice ok">Gap-fill rescued: ${Object.entries(j.rescued).map(([k, v]) => `${esc(k)} +${v}`).join(", ")}</div>`);
+  }
+  $("d-notices").innerHTML = out.join("");
+}
+
+async function refreshDetail() {
+  clearTimeout(detailTimer);
+  if (!selected) { $("detail-empty").classList.remove("hidden"); $("detail-body").classList.add("hidden"); return; }
+  let j;
+  try { j = await api(`/api/jobs/${selected}`); }
+  catch (_) { selected = null; current = null; refreshDetail(); return; }
+  const changedJob = !current || current.id !== j.id;
+  const finishedNow = current && current.id === j.id && current.status !== j.status;
+  current = j;
+  if (finishedNow) reportFor = null;
+  $("detail-empty").classList.add("hidden"); $("detail-body").classList.remove("hidden");
+  $("d-title").textContent = j.title || j.transcript_name;
+  const st = $("d-status"); st.className = "badge " + j.status; st.textContent = STATUS_LABEL[j.status] || j.status;
+  const facts = [["Started", when(j.started || j.created)]];
+  if (j.started) facts.push(["Duration", duration(j)]);
+  if (j.segments) facts.push(["Transcript", `${j.segments} segments, ${j.words} words, ${j.source_format}`]);
+  if (j.item_count) facts.push(["Items", j.item_count]);
+  const opts = Object.entries(j.options || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+  if (opts) facts.push(["Options", opts]);
+  $("d-facts").innerHTML = facts.map(([k, v]) => `<span>${esc(k)} <b>${esc(v)}</b></span>`).join("");
+
+  $("d-md").classList.toggle("hidden", !j.report_md); $("d-md").href = `/api/jobs/${j.id}/report?format=md`;
+  $("d-json").classList.toggle("hidden", !j.report_json); $("d-json").href = `/api/jobs/${j.id}/report?format=json`;
+  $("d-resume").classList.toggle("hidden", !["failed", "interrupted", "cancelled"].includes(j.status));
+  $("d-cancel").classList.toggle("hidden", !["queued", "running"].includes(j.status) || j.cancel_requested);
+  $("d-delete").classList.toggle("hidden", ["queued", "running"].includes(j.status));
+
+  renderSteps(j); renderPasses(j); renderNotices(j);
+  $("d-counts").innerHTML = Object.entries(j.counts || {}).filter(([, n]) => n)
+    .map(([k, n]) => `<span>${esc(k)}: <b>${n}</b></span>`).join("");
+
+  if (changedJob) setTab(j.status === "done" ? "report" : (j.status === "queued" ? "transcript" : "log"));
+  else if (finishedNow && j.status === "done") setTab("report");
+  else if (tab === "log" || finishedNow) loadTab();
+  if (finishedNow) loadJobs();
+  if (["queued", "running"].includes(j.status)) detailTimer = setTimeout(refreshDetail, 2000);
+}
+
+async function act(method, path, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  try { await api(path, { method }); } catch (e) { alert(e.message); }
+  await loadJobs(); refreshDetail();
+}
+$("d-resume").onclick = () => act("POST", `/api/jobs/${selected}/resume`);
+$("d-cancel").onclick = () => act("POST", `/api/jobs/${selected}/cancel`, "Stop this analysis? It can be resumed later.");
+$("d-delete").onclick = async () => {
+  await act("DELETE", `/api/jobs/${selected}`, "Delete this analysis and its report?");
+  select(null);
+};
+
+// ---------------------------------------------------------------- boot
+loadConfig();
+loadJobs().then(() => {
+  const m = location.hash.match(/job=([\w-]+)/);
+  if (m) select(m[1]);
+});
+setInterval(loadJobs, 5000);
+</script>
+</body>
+</html>
