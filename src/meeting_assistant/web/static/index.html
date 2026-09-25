@@ -341,6 +341,7 @@ function checkHtml(r) {
   }
   if (r.error) lines.push(esc(r.error));
   if (r.hint) lines.push(esc(r.hint));
+  if (r.route) lines.push("Route: " + esc(r.route));
   const cls = r.ok ? (r.hint ? "warn" : "ok") : "err";
   return `<div class="notice ${cls}">${lines.join("<br>")}</div>`;
 }

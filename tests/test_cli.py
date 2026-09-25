@@ -187,3 +187,24 @@ def test_progress_view_extract_before_any_dispatch():
     assert view.round_task is not None
     view.on_event("dispatch", {"current_chunks": [], "item_count": 5})
     assert view.round_task is None  # closed cleanly despite the unknown total
+
+
+def test_dotenv_process_variables_are_exported(tmp_path, monkeypatch):
+    """.env entries like NO_PROXY must reach httpx, not only the Settings fields."""
+    import os
+
+    import uvicorn
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    (tmp_path / ".env").write_text(
+        "MEETING_TEST_DOTENV_VAR=from-file\nMEETING_TEST_DOTENV_KEEP=from-file\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("MEETING_TEST_DOTENV_KEEP", "from-env")
+    try:
+        result = runner.invoke(app, ["serve", "--data-dir", str(tmp_path / "data")])
+        assert result.exit_code == 0, result.output
+        assert os.environ["MEETING_TEST_DOTENV_VAR"] == "from-file"
+        assert os.environ["MEETING_TEST_DOTENV_KEEP"] == "from-env"  # the environment wins
+    finally:
+        os.environ.pop("MEETING_TEST_DOTENV_VAR", None)

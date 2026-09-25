@@ -290,3 +290,72 @@ def test_connection_can_be_tested_with_unsaved_values(client):
     assert result["url"] == "http://127.0.0.1:9/v1/models"
     assert result["ok"] is False
     assert _fields(client)["OPENAI_BASE_URL"]["value"] == "http://saved.invalid/v1"  # nothing saved
+
+
+# ------------------------------------------------------------ connection check
+
+
+class _MockedLLM:
+    """Stands in for MeetingLLM: same ChatOpenAI wiring, but a mocked HTTP transport."""
+
+    def __init__(self, handler):
+        self.handler = handler
+
+    def __call__(self, settings):
+        import httpx
+        from langchain_openai import ChatOpenAI
+
+        handler = self.handler
+
+        class _Wrapped:
+            def _chat_model(self, role):
+                return ChatOpenAI(
+                    model="gpt-oss", base_url=settings.openai_base_url, api_key=settings.openai_api_key,
+                    http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+                )
+
+        return _Wrapped()
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "ok", "expect"),
+    [
+        (200, {}, True, None),
+        (302, {"location": "https://sso.corp.example/login"}, False, "redirect to https://sso.corp.example/login"),
+        (401, {}, False, "HTTP 401"),
+        (404, {}, True, "HTTP 404 on /models"),
+    ],
+)
+def test_llm_check_goes_through_the_pipeline_client(client, monkeypatch, status, headers, ok, expect):
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        if status == 200:
+            return httpx.Response(200, json={"object": "list", "data": [{"id": "gpt-oss", "object": "model"}]})
+        return httpx.Response(status, headers=headers, json={"error": {"message": "nope"}})
+
+    monkeypatch.setattr("meeting_assistant.llm.MeetingLLM", _MockedLLM(handler))
+    result = client.get("/api/llm-check").json()
+    assert seen == ["http://127.0.0.1:9/v1/models"]
+    assert result["ok"] is ok
+    if expect:
+        assert expect in result["error"]
+    else:
+        assert result["models"] == ["gpt-oss"]
+    assert result["route"].startswith(("direct", "through proxy"))
+
+
+def test_route_reports_proxy_and_no_proxy(monkeypatch):
+    from meeting_assistant.web.app import _route
+
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://user:pw@proxy.corp:8080")
+    assert _route("https://llm.corp.internal/v1") == (
+        "through proxy http://***@proxy.corp:8080 (add llm.corp.internal to NO_PROXY to go direct)"
+    )
+    monkeypatch.setenv("NO_PROXY", ".corp.internal,localhost")
+    assert _route("https://llm.corp.internal/v1").startswith("direct")

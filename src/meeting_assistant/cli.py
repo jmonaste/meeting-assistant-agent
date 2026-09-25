@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import (
@@ -42,6 +43,12 @@ logger = logging.getLogger(__name__)
 @app.callback()
 def _root() -> None:
     """meeting-assistant: multi-pass meeting transcript analysis."""
+    # Settings reads .env for its own fields only. Export the file too, so the
+    # process-level variables people keep there (SSL_CERT_FILE,
+    # REQUESTS_CA_BUNDLE, HTTPS_PROXY / NO_PROXY, LANGCHAIN_OPENAI_TCP_KEEPALIVE)
+    # reach httpx and langchain as well. Variables already set in the
+    # environment (conda, the shell, a ConfigMap) win over the file.
+    load_dotenv(".env", override=False)
 
 
 def _setup_logging(log_path: str, verbose: bool) -> None:

@@ -11,9 +11,11 @@ import logging
 import os
 import re
 import time
+import urllib.request
 from contextlib import asynccontextmanager
 from importlib import resources
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
@@ -81,56 +83,109 @@ def _int_or_none(value: str | None) -> int | None:
         raise HTTPException(422, f"not a number: {value!r}") from None
 
 
+def _cause_chain(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    cur: BaseException | None = exc
+    while cur is not None and cur not in chain and len(chain) < 10:
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    return chain
+
+
+def _route(url: str) -> str:
+    """Whether a request to ``url`` goes direct or through a proxy.
+
+    Uses the same sources httpx reads with ``trust_env``: the proxy environment
+    variables and, on Windows, the system (registry) proxy settings.
+    """
+    parts = urlsplit(url)
+    proxies = urllib.request.getproxies()
+    proxy = proxies.get(parts.scheme) or proxies.get("all")
+    if not proxy:
+        return "direct (no proxy configured)"
+    no_proxy = proxies.get("no", "")
+    host = parts.hostname or ""
+    bypass = any(
+        entry and (host == entry.lstrip(".") or host.endswith("." + entry.lstrip(".")) or entry == "*")
+        for entry in (e.strip() for e in no_proxy.split(","))
+    ) or urllib.request.proxy_bypass(host)
+    if bypass:
+        return f"direct ({host} is excluded from the proxy)"
+    return f"through proxy {_mask(proxy)} (add {host} to NO_PROXY to go direct)"
+
+
 def _probe_endpoint(s: Settings) -> dict:
-    """Probe ``GET {base_url}/models`` with the same TLS/proxy settings as a run."""
+    """List the endpoint's models through the *pipeline's own* client.
+
+    The OpenAI client and HTTP client come from ``MeetingLLM`` exactly as a run
+    builds them, so whatever ``llm.py`` configures there — TLS verification or a
+    CA path, redirects, proxies, timeouts — is what gets tested. Only the
+    timeout (15 s) and retries (none) are shortened for the probe.
+    """
+    from ..llm import MeetingLLM
+
     url = s.openai_base_url.rstrip("/") + "/models"
-    result: dict = {"url": _mask(url), "ok": False}
+    result: dict = {"url": _mask(url), "ok": False, "route": _route(s.openai_base_url)}
     started = time.perf_counter()
     try:
-        with httpx.Client(verify=s.verify_ssl, timeout=15.0) as client:
-            response = client.get(url, headers={"Authorization": f"Bearer {s.openai_api_key}"})
-    except httpx.ProxyError as exc:
-        result.update(error=f"proxy error: {exc}", hint="Check HTTPS_PROXY / NO_PROXY for this endpoint.")
-    except httpx.TimeoutException:
-        result.update(
-            error="timed out after 15s",
-            hint="The endpoint is not reachable from here: a firewall, a missing proxy, "
-            "or an internal host that needs to be in NO_PROXY.",
-        )
-    except httpx.ConnectError as exc:
-        text = str(exc)
-        hint = "Check the host name and that it is reachable from this machine/pod."
-        if "CERTIFICATE_VERIFY_FAILED" in text or "certificate" in text.lower():
-            hint = (
-                "TLS verification failed: the endpoint (or a proxy doing SSL inspection) "
-                "uses a certificate from a corporate CA. Mount that CA and point "
-                "SSL_CERT_FILE at a bundle that includes it."
-            )
-        result.update(error=f"connection failed: {text[:300]}", hint=hint)
-    except httpx.HTTPError as exc:  # e.g. an invalid URL typed in the settings
-        result.update(error=f"request failed: {str(exc)[:300]}", hint="Check the base URL.")
-    else:
-        result["status_code"] = response.status_code
+        client = MeetingLLM(s)._chat_model("lead").root_client.with_options(max_retries=0, timeout=15.0)
+        page = client.models.list()
+        ids = [getattr(m, "id", None) for m in getattr(page, "data", [])]
+    except Exception as exc:  # noqa: BLE001 - classified below for the user
+        chain = _cause_chain(exc)
+        text = " | ".join(str(e) for e in chain)
+        root = chain[-1]
+        status = getattr(exc, "status_code", None)
         result["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
-        if response.status_code in (401, 403):
-            result.update(error=f"HTTP {response.status_code}", hint="The endpoint rejected the API key.")
-        elif response.status_code >= 400:
-            # Reachable, but no /models route: some gateways only proxy /chat/completions.
+        if status is not None:
+            result["status_code"] = status
+            response = getattr(exc, "response", None)
+            location = response.headers.get("location", "") if response is not None else ""
+            if status in (401, 403):
+                result.update(error=f"HTTP {status}", hint="The endpoint rejected the API key.")
+            elif status == 404:
+                result.update(
+                    ok=True,
+                    error="HTTP 404 on /models",
+                    hint="The endpoint answered, so network and TLS work; it just does not list models.",
+                )
+            elif 300 <= status < 400:
+                result.update(
+                    error=f"HTTP {status} redirect" + (f" to {_mask(location)}" if location else ""),
+                    hint="The endpoint answered with a redirect instead of the API: usually a login/SSO "
+                    "page, a proxy block page, or a base URL that is slightly off (http vs https, "
+                    "missing /v1).",
+                )
+            else:
+                result.update(error=f"HTTP {status}: {_mask(str(exc))[:200]}")
+        elif any(isinstance(e, httpx.ProxyError) for e in chain):
+            result.update(error=f"proxy error: {root}", hint="Check HTTPS_PROXY / NO_PROXY for this endpoint.")
+        elif any("Timeout" in type(e).__name__ for e in chain):
             result.update(
-                ok=response.status_code == 404,
-                error=f"HTTP {response.status_code} on /models",
-                hint="The endpoint answered, so network and TLS work; it just does not list models.",
+                error="timed out after 15s",
+                hint="Not reachable from here: a firewall, a missing proxy, or an internal host "
+                "that needs to be in NO_PROXY.",
+            )
+        elif "CERTIFICATE_VERIFY_FAILED" in text or "certificate verify" in text.lower():
+            result.update(
+                error=f"TLS verification failed: {str(root)[:200]}",
+                hint="The endpoint (or a proxy doing SSL inspection) uses a certificate from a "
+                "corporate CA that this process does not trust. Point SSL_CERT_FILE (or the CA "
+                "path your llm.py uses) at a bundle that includes it.",
             )
         else:
-            result["ok"] = True
-            try:
-                ids = [m.get("id") for m in response.json().get("data", []) if isinstance(m, dict)]
-            except ValueError:
-                ids = []
-            result["models"] = ids
-            missing = [m for m in {s.resolved_worker_model(), s.resolved_lead_model()} if ids and m not in ids]
-            if missing:
-                result["hint"] = "Configured model(s) not listed by the endpoint: " + ", ".join(sorted(missing))
+            result.update(
+                error=f"{type(root).__name__}: {str(root)[:300]}",
+                hint="Check the host name and that it is reachable from this machine/pod.",
+            )
+        return result
+
+    result["ok"] = True
+    result["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+    result["models"] = [i for i in ids if i]
+    missing = [m for m in {s.resolved_worker_model(), s.resolved_lead_model()} if ids and m not in ids]
+    if missing:
+        result["hint"] = "Configured model(s) not listed by the endpoint: " + ", ".join(sorted(missing))
     return result
 
 
