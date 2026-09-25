@@ -1,0 +1,115 @@
+# The running app: one pod, a volume for jobs/reports, and an internal Service.
+# Nothing is exposed outside the cluster; reach it with
+#   oc port-forward svc/meeting-assistant 8080:8080   ->  http://localhost:8080
+#
+# Optionally reads the ConfigMap meeting-assistant-config, the Secret
+# meeting-assistant-secrets and the ConfigMap meeting-assistant-ca, created as
+# described in docs/08-Web-UI-And-OpenShift.md. The endpoint, API key and models
+# can instead be set from the UI's Settings dialog (saved on the volume).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: meeting-assistant-data
+  labels:
+    app: meeting-assistant
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meeting-assistant
+  labels:
+    app: meeting-assistant
+  annotations:
+    # Roll out automatically every time a new build lands in the ImageStream.
+    image.openshift.io/triggers: >-
+      [{"from":{"kind":"ImageStreamTag","name":"meeting-assistant:latest"},
+        "fieldPath":"spec.template.spec.containers[?(@.name==\"meeting-assistant\")].image"}]
+spec:
+  replicas: 1          # one worker drains the job queue; do not scale out
+  strategy:
+    type: Recreate     # the ReadWriteOnce volume can only be mounted by one pod
+  selector:
+    matchLabels:
+      app: meeting-assistant
+  template:
+    metadata:
+      labels:
+        app: meeting-assistant
+      annotations:
+        alpha.image.policy.openshift.io/resolve-names: "*"
+    spec:
+      containers:
+        - name: meeting-assistant
+          image: meeting-assistant:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: meeting-assistant-config
+                optional: true   # endpoint and models can also be set in the UI (Settings)
+            - secretRef:
+                name: meeting-assistant-secrets
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /opt/app-root/data
+            - name: extra-ca
+              mountPath: /etc/meeting-assistant/ca
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: meeting-assistant-data
+          # No PVC quota in your namespace? Replace the two lines above with
+          #   emptyDir: {}
+          # (jobs and reports are then lost whenever the pod restarts).
+        - name: extra-ca
+          configMap:
+            name: meeting-assistant-ca
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meeting-assistant
+  labels:
+    app: meeting-assistant
+spec:
+  selector:
+    app: meeting-assistant
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

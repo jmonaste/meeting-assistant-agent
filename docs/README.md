@@ -13,6 +13,7 @@ classes and functions it explains, and every non-obvious decision is justified.
 | 05 | [LLM gateway](05-LLM-Gateway.md) | The single point of contact with the model: structured output, the retry ladder, the JSON fallback, the tool loop, and local-model quirks. |
 | 06 | [Testing and verification](06-Testing-And-Verification.md) | The injectable fake LLM, what each fixture and test proves, and how the review loop is verified without an endpoint. |
 | 07 | [Endpoint tuning](07-Endpoint-Tuning.md) | Practical guide for slow/rate-limited endpoints: the safe baseline (`--max-concurrency 1`, smaller chunks, gateway timeout), how to measure with the log file, and how to step the settings up safely. |
+| 08 | [Web UI and OpenShift](08-Web-UI-And-OpenShift.md) | The browser UI (`meeting-assistant serve`): background jobs, persistence and resume; the container image; step-by-step OpenShift deployment with `oc port-forward`, corporate proxy/CA, and troubleshooting. |
 
 ## The system in one diagram
 
@@ -70,6 +71,11 @@ src/meeting_assistant/
   render/
     document.py        render_report(), render_json()                   -> ch. 02
     lint.py            lint_markdown(), md_cell(), md_anchor()           -> ch. 02
-  cli.py               typer entry point (meeting-assistant process)
+  web/
+    jobs.py            JobManager: background queue, job.json, resume  -> ch. 08
+    app.py             create_app(): page + JSON API, endpoint check   -> ch. 08
+    static/index.html  the single-page UI (no external assets)         -> ch. 08
+  cli.py               typer entry point (process, serve)
+deploy/                container entrypoint + OpenShift manifests      -> ch. 08
 tests/                                                                   -> ch. 06
 ```

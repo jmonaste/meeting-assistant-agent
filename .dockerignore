@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+venv
+.env
+**/__pycache__
+**/*.egg-info
+.pytest_cache
+.meeting_cache
+out
+meeting-data
+deploy/openshift/config.env
+build.tar

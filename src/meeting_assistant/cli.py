@@ -319,6 +319,47 @@ def process(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option(help="Interface to bind; 0.0.0.0 inside a container.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port to listen on.")] = 8080,
+    data_dir: Annotated[Optional[Path], typer.Option("--data-dir", envvar="MEETING_DATA_DIR", help="Where uploaded transcripts, run logs and reports are kept.")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Also log info-level pipeline events to the console.")] = False,
+) -> None:
+    """Start the browser UI: upload a transcript, follow the review passes, read the report."""
+    try:
+        import uvicorn
+
+        from .web import create_app
+    except ImportError as exc:
+        console.print(f"[red]The web UI dependencies are missing ({exc.name}):[/red] re-run pip install -e .")
+        raise typer.Exit(code=2)
+
+    # Pipeline warnings (endpoint retries, chunk failures) and job lifecycle
+    # events go to stdout for `oc logs`; each job's full DEBUG trail is in its run.log.
+    root = logging.getLogger("meeting_assistant")
+    root.setLevel(logging.DEBUG)
+    root.propagate = False
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s"))
+    handler.setLevel(logging.INFO if verbose else logging.WARNING)
+    root.addHandler(handler)
+    if not verbose:
+        web_handler = logging.StreamHandler()
+        web_handler.setFormatter(handler.formatter)
+        web_handler.setLevel(logging.INFO)
+        web_handler.addFilter(lambda record: record.levelno < logging.WARNING)
+        logging.getLogger("meeting_assistant.web").addHandler(web_handler)
+
+    settings = load_settings()
+    folder = data_dir or Path("meeting-data")
+    console.print(
+        f"[bold]meeting-assistant v{__version__}[/bold] web UI on http://{host}:{port} — "
+        f"endpoint {settings.openai_base_url}, data in {folder.resolve()}"
+    )
+    uvicorn.run(create_app(folder), host=host, port=port, log_level="warning")
+
+
 def _safe_name(name: str) -> str:
     return re.sub(r"[^\w.-]+", "-", name.strip()).strip("-")
 
