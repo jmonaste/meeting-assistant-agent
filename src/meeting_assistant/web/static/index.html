@@ -37,7 +37,7 @@ main { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 16px
 .card + .card { margin-top: 16px; }
 h2 { font-size: 14px; margin: 0 0 12px; font-weight: 600; }
 label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
-input[type=text], input[type=number], select, textarea {
+input[type=text], input[type=number], input[type=password], select, textarea {
   width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--panel); color: var(--text); font: inherit; }
 textarea { resize: vertical; min-height: 64px; }
@@ -113,6 +113,25 @@ pre.log { background: var(--code); padding: 12px; border-radius: 6px; font-size:
 .report blockquote { margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); }
 .report a { color: var(--accent); }
 .muted { color: var(--muted); }
+dialog { border: 1px solid var(--line); border-radius: 10px; padding: 0; background: var(--panel); color: var(--text);
+  width: min(660px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+dialog::backdrop { background: rgba(10, 15, 25, .45); }
+dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 50px); }
+.dlg-head, .dlg-foot { display: flex; align-items: center; gap: 12px; padding: 12px 18px; }
+.dlg-head { border-bottom: 1px solid var(--line); justify-content: space-between; }
+.dlg-head h2 { margin: 0; }
+.dlg-foot { border-top: 1px solid var(--line); flex-wrap: wrap; }
+.dlg-foot .spacer { flex: 1; }
+.dlg-body { padding: 4px 18px 16px; overflow: auto; }
+.dlg-body > p { font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+.set-group { margin-top: 14px; }
+.set-group > summary { font-size: 13px; font-weight: 600; color: var(--text); padding: 4px 0; }
+.set-field { margin-top: 10px; }
+.set-field label { margin: 0 0 4px; display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 12.5px; }
+.field-meta { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.field-err { color: var(--err); font-size: 12px; margin-top: 3px; }
+.src { font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 8px; background: var(--code); color: var(--muted); }
+.src.ui { background: var(--accent-soft); color: var(--accent); }
 .hidden { display: none !important; }
 </style>
 </head>
@@ -124,6 +143,7 @@ pre.log { background: var(--code); padding: 12px; border-radius: 6px; font-size:
     <span>Endpoint <code id="ep-url">…</code></span>
     <span>worker <code id="ep-worker">…</code> lead <code id="ep-lead">…</code></span>
     <button class="secondary" id="ep-check" type="button">Test connection</button>
+    <button class="secondary" id="open-settings" type="button">Settings</button>
   </div>
 </header>
 <div id="ep-result" class="hidden" style="padding: 0 20px; cursor: pointer" title="Click to dismiss"></div>
@@ -232,6 +252,28 @@ pre.log { background: var(--code); padding: 12px; border-radius: 6px; font-size:
   </section>
 </main>
 
+<dialog id="settings-dlg">
+  <form id="settings-form" novalidate>
+    <div class="dlg-head">
+      <h2>Settings</h2>
+      <button type="button" class="linkish" id="settings-close">Close</button>
+    </div>
+    <div class="dlg-body">
+      <p>Saved on the server and used by every <b>new</b> analysis. Leave a field empty to use the
+        deployment value (ConfigMap / environment / <code>.env</code>) shown in grey. Proxy and CA
+        certificates stay in the deployment configuration.</p>
+      <div id="settings-fields"></div>
+      <div id="settings-result"></div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="secondary" id="settings-test">Test connection</button>
+      <span class="msg" id="settings-msg"></span>
+      <span class="spacer"></span>
+      <button type="submit" class="primary" id="settings-save">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -265,7 +307,9 @@ async function api(path, opts = {}) {
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json()).detail || detail; } catch (_) {}
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    const err = new Error(typeof detail === "string" ? detail : Object.entries(detail).map(([k, v]) => `${k}: ${v}`).join("; "));
+    err.detail = detail;
+    throw err;
   }
   const type = res.headers.get("content-type") || "";
   return type.includes("json") ? res.json() : res.text();
@@ -287,22 +331,24 @@ async function loadConfig() {
     $("language").options[0].textContent = `Default (${c.language})`;
   } catch (e) { $("ep-url").textContent = "unavailable"; }
 }
+function checkHtml(r) {
+  const lines = [];
+  if (r.ok) {
+    lines.push(`Reachable: ${esc(r.url)}` + (r.elapsed_ms != null ? ` (${r.elapsed_ms} ms)` : ""));
+    if (r.models && r.models.length) lines.push("Models: " + r.models.map(esc).join(", "));
+  } else {
+    lines.push(`Not reachable: ${esc(r.url)}`);
+  }
+  if (r.error) lines.push(esc(r.error));
+  if (r.hint) lines.push(esc(r.hint));
+  const cls = r.ok ? (r.hint ? "warn" : "ok") : "err";
+  return `<div class="notice ${cls}">${lines.join("<br>")}</div>`;
+}
 $("ep-check").onclick = async () => {
   const box = $("ep-result"), btn = $("ep-check");
   btn.disabled = true; btn.textContent = "Testing…";
   try {
-    const r = await api("/api/llm-check");
-    const lines = [];
-    if (r.ok) {
-      lines.push(`Reachable: ${esc(r.url)}` + (r.elapsed_ms != null ? ` (${r.elapsed_ms} ms)` : ""));
-      if (r.models && r.models.length) lines.push("Models: " + r.models.map(esc).join(", "));
-    } else {
-      lines.push(`Not reachable: ${esc(r.url)}`);
-    }
-    if (r.error) lines.push(esc(r.error));
-    if (r.hint) lines.push(esc(r.hint));
-    const cls = r.ok ? (r.hint ? "warn" : "ok") : "err";
-    box.innerHTML = `<div class="notice ${cls}">${lines.join("<br>")}</div>`;
+    box.innerHTML = checkHtml(await api("/api/llm-check"));
   } catch (e) {
     box.innerHTML = `<div class="notice err">${esc(e.message)}</div>`;
   }
@@ -491,6 +537,118 @@ $("d-cancel").onclick = () => act("POST", `/api/jobs/${selected}/cancel`, "Stop 
 $("d-delete").onclick = async () => {
   await act("DELETE", `/api/jobs/${selected}`, "Delete this analysis and its report?");
   select(null);
+};
+
+// ---------------------------------------------------------------- settings
+const SOURCE_LABEL = { ui: "set here", env: "deployment", default: "default" };
+const OPEN_GROUPS = new Set(["Endpoint", "Models"]);
+let settingsMeta = [];
+
+function fmt(v) { return v === "" || v == null ? "(empty)" : String(v); }
+function settingInput(f) {
+  const id = "set-" + f.key;
+  const saved = f.source === "ui";
+  if (f.kind === "secret") {
+    const ph = f.configured ? `${saved ? "Saved here" : "From the deployment"} (${f.masked}) — type to replace` : "Not set";
+    return `<input type="password" id="${id}" data-key="${f.key}" autocomplete="off" placeholder="${esc(ph)}">`;
+  }
+  if (f.kind === "bool") {
+    const cur = saved ? String(f.value) : "";
+    const opt = (v, label) => `<option value="${v}" ${cur === v ? "selected" : ""}>${label}</option>`;
+    return `<select id="${id}" data-key="${f.key}">${opt("", `Deployment value (${f.fallback ? "yes" : "no"})`)}${opt("true", "Yes")}${opt("false", "No")}</select>`;
+  }
+  const type = f.kind === "int" || f.kind === "float" ? "number" : "text";
+  const extra = type === "number"
+    ? ` step="${f.kind === "int" ? 1 : "any"}"${f.minimum != null ? ` min="${f.minimum}"` : ""}` : "";
+  const list = f.kind === "language" ? ' list="lang-list"' : "";
+  let ph = fmt(f.fallback);
+  if (f.key === "MEETING_WORKER_MODEL" && !f.fallback) ph = "(same as the lead model)";
+  if (f.key === "MEETING_LEAD_MODEL" && !f.fallback) ph = "(same as the worker model, else gpt-oss)";
+  return `<input type="${type}" id="${id}" data-key="${f.key}"${extra}${list} value="${saved ? esc(f.value) : ""}" placeholder="${esc(ph)}">`;
+}
+function renderSettings(errors = {}) {
+  const groups = [];
+  for (const f of settingsMeta) {
+    let g = groups.find((x) => x.name === f.group);
+    if (!g) groups.push(g = { name: f.group, fields: [] });
+    g.fields.push(f);
+  }
+  $("settings-fields").innerHTML = groups.map((g) => `
+    <details class="set-group" ${OPEN_GROUPS.has(g.name) || g.fields.some((f) => errors[f.key]) ? "open" : ""}>
+      <summary>${esc(g.name)}</summary>
+      ${g.fields.map((f) => `
+        <div class="set-field">
+          <label for="set-${f.key}" title="${esc(f.help)}">${esc(f.label)}
+            <span class="src ${f.source}">${SOURCE_LABEL[f.source]}</span></label>
+          ${settingInput(f)}
+          <div class="field-meta">${esc(f.key)}${f.source === "ui" ? ` · <button type="button" class="linkish" data-reset="${f.key}">use deployment value</button>` : ""}</div>
+          ${errors[f.key] ? `<div class="field-err">${esc(errors[f.key])}</div>` : ""}
+        </div>`).join("")}
+    </details>`).join("") + `<datalist id="lang-list"><option value="auto"><option value="es"><option value="en"></datalist>`;
+  for (const b of $("settings-fields").querySelectorAll("[data-reset]")) {
+    b.onclick = () => {
+      const el = $("set-" + b.dataset.reset);
+      el.value = ""; el.dataset.clear = "1";
+      b.parentElement.innerHTML = esc(b.dataset.reset) + " · will use the deployment value when saved";
+    };
+  }
+}
+function settingsChanges() {
+  const changes = {};
+  for (const f of settingsMeta) {
+    const el = $("set-" + f.key);
+    if (!el) continue;
+    if (el.dataset.clear === "1" && !el.value) { changes[f.key] = null; continue; }
+    if (f.kind === "secret") { if (el.value) changes[f.key] = el.value; continue; }
+    const orig = f.source === "ui" ? String(f.value) : "";
+    const now = el.value.trim();
+    if (now !== orig) changes[f.key] = now === "" ? null : now;
+  }
+  return changes;
+}
+async function openSettings() {
+  $("settings-msg").textContent = ""; $("settings-result").innerHTML = "";
+  try { settingsMeta = (await api("/api/settings")).fields; } catch (e) { alert(e.message); return; }
+  renderSettings();
+  $("settings-dlg").showModal();
+}
+$("open-settings").onclick = openSettings;
+$("settings-close").onclick = () => $("settings-dlg").close();
+$("settings-test").onclick = async () => {
+  const btn = $("settings-test"), box = $("settings-result");
+  btn.disabled = true; btn.textContent = "Testing…";
+  try {
+    box.innerHTML = checkHtml(await api("/api/llm-check", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: settingsChanges() }),
+    }));
+  } catch (e) {
+    box.innerHTML = `<div class="notice err">${esc(e.message)}</div>`;
+  }
+  btn.disabled = false; btn.textContent = "Test connection";
+  box.scrollIntoView({ block: "nearest" });
+};
+$("settings-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = $("settings-msg"), changes = settingsChanges();
+  if (!Object.keys(changes).length) { msg.className = "msg"; msg.textContent = "Nothing changed."; return; }
+  $("settings-save").disabled = true; msg.className = "msg"; msg.textContent = "Saving…";
+  try {
+    settingsMeta = (await api("/api/settings", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values: changes }),
+    })).fields;
+    renderSettings();
+    msg.textContent = "Saved. New analyses will use these settings.";
+    loadConfig();
+  } catch (err) {
+    msg.className = "msg err"; msg.textContent = "Not saved — check the highlighted fields.";
+    if (err.detail && typeof err.detail === "object") {
+      const keep = {};
+      for (const f of settingsMeta) keep[f.key] = $("set-" + f.key) ? $("set-" + f.key).value : "";
+      renderSettings(err.detail);
+      for (const [k, v] of Object.entries(keep)) if ($("set-" + k)) $("set-" + k).value = v;
+    } else { msg.textContent = err.message; }
+  } finally { $("settings-save").disabled = false; }
 };
 
 // ---------------------------------------------------------------- boot

@@ -21,9 +21,14 @@ internal CA).
   transcript.
 - **Resume** a failed, interrupted or cancelled run from its last checkpoint,
   **cancel** a running one, **delete** old ones.
+- **Settings** sets the endpoint URL, API key, models and every pipeline knob
+  from the browser, saved on the server for all new analyses — no ConfigMap
+  edit or pod restart. Each field shows whether its value comes from the UI,
+  the deployment configuration or the code default, and can be reset.
 - **Test connection** probes `GET {OPENAI_BASE_URL}/models` with exactly the
   TLS and proxy settings a run uses, and says *why* it failed (TLS / proxy /
-  timeout / API key) — the first thing to press after deploying.
+  timeout / API key) — the first thing to press after deploying. Inside
+  Settings it tests the values you are editing, before saving them.
 
 ## How it is built
 
@@ -48,6 +53,8 @@ Design decisions, and why:
 | **Plain HTTP polling**, no websockets, no external JS/CSS/fonts | Works unchanged through `oc port-forward`, corporate proxies and browsers that cannot reach a CDN. The page is one static HTML file. |
 | Report Markdown rendered **server-side with raw HTML disabled** | Model output is untrusted; `markdown-it-py` (already a dependency via `rich`) renders tables and headings but escapes any HTML the model might emit. |
 | Pipeline progress via the existing `on_event` hook | Same node events the CLI's progress view consumes (`_Progress` mirrors `cli._ProgressView`); the pipeline itself is not modified. |
+| Settings saved from the UI **layer over** the environment | Precedence per run: *New analysis* options > Settings (`<data dir>/settings.json`) > environment (ConfigMap/Secret, `.env`) > code defaults. The deployment can start with no configuration at all, and the environment still works for anyone who prefers it. Values are validated through the same `Settings` model before they are saved, so a typo is rejected instead of silently ignored. |
+| The API key is **write-only** | The browser only ever gets "configured (…last 4)". It is stored in `settings.json` with mode 0600 on the pod's volume. |
 | Container on **Red Hat UBI Python 3.12**, writable paths only under `/opt/app-root` | OpenShift's restricted SCC runs the container as a random UID in group 0; the UBI image and `fix-permissions` make that work without root. |
 
 The UI has **no authentication**. It is meant to be reached through
@@ -128,6 +135,16 @@ cannot download packages, uncomment the `buildArgs` in `build.yaml`
 
 **3. Configure the endpoint**
 
+Two ways, and they combine:
+
+- **From the UI** (simplest): skip to step 5, open the app, go to **Settings**
+  and fill in *Base URL*, *API key* and the models; **Test connection**, then
+  **Save**.
+- **As deployment configuration**, for values that must exist before the
+  process starts — the proxy variables and `LANGCHAIN_OPENAI_TCP_KEEPALIVE` —
+  or if you prefer to keep everything in the namespace. Anything saved later
+  in Settings overrides it.
+
 ```bash
 cp deploy/openshift/config.env.example deploy/openshift/config.env   # Windows: copy ...
 # edit config.env: OPENAI_BASE_URL, models, proxy ...
@@ -137,7 +154,8 @@ oc create secret generic meeting-assistant-secrets --from-literal=OPENAI_API_KEY
 
 `config.env` is git-ignored — keep internal host names and proxies out of the
 repository. The endpoint URL must be reachable **from the pod**, which is not
-necessarily what works from your laptop.
+necessarily what works from your laptop. Do not copy `SSL_CERT_FILE` /
+`REQUESTS_CA_BUNDLE` or any Windows path into it: step 4 handles certificates.
 
 **4. (If needed) trust the corporate CA**
 
@@ -184,7 +202,8 @@ Browse to <http://localhost:8080> and press **Test connection** first.
 | Task | Command |
 |------|---------|
 | Deploy a new version of the code | commit, then `oc start-build meeting-assistant --from-repo=. --follow` (the Deployment rolls out by itself when the build finishes) |
-| Change the configuration | edit `config.env`, then `oc create configmap meeting-assistant-config --from-env-file=deploy/openshift/config.env --dry-run=client -o yaml \| oc apply -f -` and `oc rollout restart deploy/meeting-assistant` |
+| Change endpoint, key, models or tuning | **Settings** in the UI (applies to the next analysis) |
+| Change the deployment configuration | edit `config.env`, then `oc create configmap meeting-assistant-config --from-env-file=deploy/openshift/config.env --dry-run=client -o yaml \| oc apply -f -` and `oc rollout restart deploy/meeting-assistant` |
 | Follow the server log | `oc logs -f deploy/meeting-assistant` |
 | Copy all reports to your laptop | `oc rsync <pod>:/opt/app-root/data/jobs ./jobs-backup` (`oc get pods -l app=meeting-assistant` for the pod name) |
 | Remove everything | `oc delete all,pvc,configmap,secret -l app=meeting-assistant` plus the ConfigMaps/Secret you created by name |

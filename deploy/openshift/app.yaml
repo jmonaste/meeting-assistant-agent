@@ -2,9 +2,10 @@
 # Nothing is exposed outside the cluster; reach it with
 #   oc port-forward svc/meeting-assistant 8080:8080   ->  http://localhost:8080
 #
-# Expects the ConfigMap meeting-assistant-config (and optionally the Secret
-# meeting-assistant-secrets and the ConfigMap meeting-assistant-ca) created as
-# described in docs/08-Web-UI-And-OpenShift.md.
+# Optionally reads the ConfigMap meeting-assistant-config, the Secret
+# meeting-assistant-secrets and the ConfigMap meeting-assistant-ca, created as
+# described in docs/08-Web-UI-And-OpenShift.md. The endpoint, API key and models
+# can instead be set from the UI's Settings dialog (saved on the volume).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -51,6 +52,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: meeting-assistant-config
+                optional: true   # endpoint and models can also be set in the UI (Settings)
             - secretRef:
                 name: meeting-assistant-secrets
                 optional: true

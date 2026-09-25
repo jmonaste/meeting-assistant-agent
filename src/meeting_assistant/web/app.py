@@ -7,6 +7,7 @@ that cannot reach any CDN.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
@@ -15,13 +16,16 @@ from importlib import resources
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 
 from .. import __version__
 from ..config import Settings, load_settings
 from ..render.lint import md_anchor
 from .jobs import JobManager
+from .settings_store import SettingsError, SettingsStore
+
+logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 _PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy")
@@ -77,9 +81,68 @@ def _int_or_none(value: str | None) -> int | None:
         raise HTTPException(422, f"not a number: {value!r}") from None
 
 
+def _probe_endpoint(s: Settings) -> dict:
+    """Probe ``GET {base_url}/models`` with the same TLS/proxy settings as a run."""
+    url = s.openai_base_url.rstrip("/") + "/models"
+    result: dict = {"url": _mask(url), "ok": False}
+    started = time.perf_counter()
+    try:
+        with httpx.Client(verify=s.verify_ssl, timeout=15.0) as client:
+            response = client.get(url, headers={"Authorization": f"Bearer {s.openai_api_key}"})
+    except httpx.ProxyError as exc:
+        result.update(error=f"proxy error: {exc}", hint="Check HTTPS_PROXY / NO_PROXY for this endpoint.")
+    except httpx.TimeoutException:
+        result.update(
+            error="timed out after 15s",
+            hint="The endpoint is not reachable from here: a firewall, a missing proxy, "
+            "or an internal host that needs to be in NO_PROXY.",
+        )
+    except httpx.ConnectError as exc:
+        text = str(exc)
+        hint = "Check the host name and that it is reachable from this machine/pod."
+        if "CERTIFICATE_VERIFY_FAILED" in text or "certificate" in text.lower():
+            hint = (
+                "TLS verification failed: the endpoint (or a proxy doing SSL inspection) "
+                "uses a certificate from a corporate CA. Mount that CA and point "
+                "SSL_CERT_FILE at a bundle that includes it."
+            )
+        result.update(error=f"connection failed: {text[:300]}", hint=hint)
+    except httpx.HTTPError as exc:  # e.g. an invalid URL typed in the settings
+        result.update(error=f"request failed: {str(exc)[:300]}", hint="Check the base URL.")
+    else:
+        result["status_code"] = response.status_code
+        result["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+        if response.status_code in (401, 403):
+            result.update(error=f"HTTP {response.status_code}", hint="The endpoint rejected the API key.")
+        elif response.status_code >= 400:
+            # Reachable, but no /models route: some gateways only proxy /chat/completions.
+            result.update(
+                ok=response.status_code == 404,
+                error=f"HTTP {response.status_code} on /models",
+                hint="The endpoint answered, so network and TLS work; it just does not list models.",
+            )
+        else:
+            result["ok"] = True
+            try:
+                ids = [m.get("id") for m in response.json().get("data", []) if isinstance(m, dict)]
+            except ValueError:
+                ids = []
+            result["models"] = ids
+            missing = [m for m in {s.resolved_worker_model(), s.resolved_lead_model()} if ids and m not in ids]
+            if missing:
+                result["hint"] = "Configured model(s) not listed by the endpoint: " + ", ".join(sorted(missing))
+    return result
+
+
 def create_app(data_dir: Path | str | None = None, settings_factory=load_settings, llm_factory=None) -> FastAPI:
     data_path = Path(data_dir or os.environ.get("MEETING_DATA_DIR") or "meeting-data")
-    manager = JobManager(data_path, settings_factory=settings_factory, llm_factory=llm_factory)
+    store = SettingsStore(data_path / "settings.json")
+
+    def effective_settings(**job_overrides) -> Settings:
+        """Environment/defaults, then the values saved in the UI, then per-job options."""
+        return settings_factory(**{**store.init_overrides(), **job_overrides})
+
+    manager = JobManager(data_path, settings_factory=effective_settings, llm_factory=llm_factory)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -111,7 +174,7 @@ def create_app(data_dir: Path | str | None = None, settings_factory=load_setting
 
     @app.get("/api/config")
     def config() -> dict:
-        s: Settings = settings_factory()
+        s = effective_settings()
         return {
             "version": __version__,
             "base_url": _mask(s.openai_base_url),
@@ -130,55 +193,35 @@ def create_app(data_dir: Path | str | None = None, settings_factory=load_setting
 
     @app.get("/api/llm-check")
     def llm_check() -> dict:
-        """Probe ``GET {base_url}/models`` with the same TLS/proxy settings as a run."""
-        s: Settings = settings_factory()
-        url = s.openai_base_url.rstrip("/") + "/models"
-        result: dict = {"url": _mask(url), "ok": False}
-        started = time.perf_counter()
+        return _probe_endpoint(effective_settings())
+
+    @app.post("/api/llm-check")
+    def llm_check_values(payload: dict = Body(default_factory=dict)) -> dict:
+        """Probe with unsaved values from the Settings dialog merged over the saved ones."""
         try:
-            with httpx.Client(verify=s.verify_ssl, timeout=15.0) as client:
-                response = client.get(url, headers={"Authorization": f"Bearer {s.openai_api_key}"})
-        except httpx.ProxyError as exc:
-            result.update(error=f"proxy error: {exc}", hint="Check HTTPS_PROXY / NO_PROXY for this endpoint.")
-        except httpx.TimeoutException:
-            result.update(
-                error="timed out after 15s",
-                hint="The endpoint is not reachable from here: a firewall, a missing proxy, "
-                "or an internal host that needs to be in NO_PROXY.",
-            )
-        except httpx.ConnectError as exc:
-            text = str(exc)
-            hint = "Check the host name and that it is reachable from this machine/pod."
-            if "CERTIFICATE_VERIFY_FAILED" in text or "certificate" in text.lower():
-                hint = (
-                    "TLS verification failed: the endpoint (or a proxy doing SSL inspection) "
-                    "uses a certificate from a corporate CA. Mount that CA and point "
-                    "SSL_CERT_FILE at a bundle that includes it."
-                )
-            result.update(error=f"connection failed: {text[:300]}", hint=hint)
-        else:
-            result["status_code"] = response.status_code
-            result["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
-            if response.status_code in (401, 403):
-                result.update(error=f"HTTP {response.status_code}", hint="The endpoint rejected OPENAI_API_KEY.")
-            elif response.status_code >= 400:
-                # Reachable, but no /models route: some gateways only proxy /chat/completions.
-                result.update(
-                    ok=response.status_code == 404,
-                    error=f"HTTP {response.status_code} on /models",
-                    hint="The endpoint answered, so network and TLS work; it just does not list models.",
-                )
-            else:
-                result["ok"] = True
-                try:
-                    ids = [m.get("id") for m in response.json().get("data", []) if isinstance(m, dict)]
-                except ValueError:
-                    ids = []
-                result["models"] = ids
-                missing = [m for m in {s.resolved_worker_model(), s.resolved_lead_model()} if ids and m not in ids]
-                if missing:
-                    result["hint"] = "Configured model(s) not listed by the endpoint: " + ", ".join(sorted(missing))
-        return result
+            values = store.validate(store.merged(payload.get("values") or {}), settings_factory)
+        except SettingsError as exc:
+            raise HTTPException(422, exc.errors) from None
+        return _probe_endpoint(settings_factory(**store.init_overrides(values)))
+
+    # ------------------------------------------------------------ settings
+
+    @app.get("/api/settings")
+    def get_settings() -> dict:
+        return {"fields": store.describe(settings_factory())}
+
+    @app.put("/api/settings")
+    def put_settings(payload: dict = Body(...)) -> dict:
+        """Save changed values; ``null`` or ``""`` resets a field to its ConfigMap/default value."""
+        changes = payload.get("values")
+        if not isinstance(changes, dict):
+            raise HTTPException(422, "expected {\"values\": {...}}")
+        try:
+            store.update(changes, settings_factory)
+        except SettingsError as exc:
+            raise HTTPException(422, exc.errors) from None
+        logger.info("settings updated from the UI: %s", ", ".join(sorted(changes)) or "(none)")
+        return {"fields": store.describe(settings_factory())}
 
     # ------------------------------------------------------------ jobs
 

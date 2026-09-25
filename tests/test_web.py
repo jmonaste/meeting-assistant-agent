@@ -197,3 +197,96 @@ def test_index_page_is_served(client):
     assert page.status_code == 200
     assert "<title>Meeting Assistant</title>" in page.text
     assert client.get("/healthz").json()["status"] == "ok"
+
+
+# ------------------------------------------------------------ settings dialog
+
+
+def _fields(client):
+    return {f["key"]: f for f in client.get("/api/settings").json()["fields"]}
+
+
+def test_settings_saved_in_the_ui_override_the_deployment(client, tmp_path):
+    before = _fields(client)
+    assert before["MEETING_MAX_SWEEPS"]["source"] == "env"  # set by the test's base factory
+    assert before["MEETING_LEAD_MODEL"]["source"] == "default"
+
+    res = client.put("/api/settings", json={"values": {
+        "OPENAI_BASE_URL": "http://llm.internal:8000/v1",
+        "MEETING_LEAD_MODEL": "gpt-oss-120b",
+        "MEETING_MAX_CONCURRENCY": "1",
+        "MEETING_VERIFY_SSL": "false",
+    }})
+    assert res.status_code == 200, res.text
+    after = {f["key"]: f for f in res.json()["fields"]}
+    assert after["MEETING_LEAD_MODEL"] == {**after["MEETING_LEAD_MODEL"], "source": "ui", "value": "gpt-oss-120b"}
+    assert after["MEETING_MAX_CONCURRENCY"]["value"] == 1  # stored typed
+    assert after["MEETING_VERIFY_SSL"]["value"] is False
+
+    config = client.get("/api/config").json()
+    assert config["base_url"] == "http://llm.internal:8000/v1"
+    assert config["lead_model"] == "gpt-oss-120b"
+    assert config["max_concurrency"] == 1
+
+    # A run uses them, and per-analysis options still win.
+    manager = client.app.state.jobs
+    job = manager.submit("t.txt", FIXTURE.read_bytes(), "", {"max_concurrency": 2})
+    manager.cancel(job.id)
+    settings = manager.settings_for(job)
+    assert settings.resolved_lead_model() == "gpt-oss-120b"
+    assert settings.verify_ssl is False
+    assert settings.max_concurrency == 2
+
+    # Reset falls back to the deployment value.
+    client.put("/api/settings", json={"values": {"MEETING_LEAD_MODEL": None, "MEETING_MAX_CONCURRENCY": ""}})
+    reset = _fields(client)
+    assert reset["MEETING_LEAD_MODEL"]["source"] == "default"
+    assert reset["MEETING_MAX_CONCURRENCY"]["value"] == 2  # the base factory's value
+
+    stored = json.loads((tmp_path / "settings.json").read_text())
+    assert "MEETING_LEAD_MODEL" not in stored and stored["OPENAI_BASE_URL"] == "http://llm.internal:8000/v1"
+
+
+def test_api_key_is_write_only_and_private(client, tmp_path):
+    client.put("/api/settings", json={"values": {"OPENAI_API_KEY": "sk-secret-value-1234"}})
+    body = client.get("/api/settings").text
+    assert "sk-secret-value" not in body
+    key = _fields(client)["OPENAI_API_KEY"]
+    assert key["configured"] is True and key["masked"] == "…1234" and "value" not in key
+
+    path = tmp_path / "settings.json"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert client.app.state.jobs.settings_for(
+        client.app.state.jobs.submit("t.txt", b"Ana: hola", "", {})
+    ).openai_api_key == "sk-secret-value-1234"
+
+    client.put("/api/settings", json={"values": {"OPENAI_API_KEY": None}})
+    assert _fields(client)["OPENAI_API_KEY"]["configured"] is False
+
+
+def test_invalid_settings_are_rejected_without_saving(client):
+    res = client.put("/api/settings", json={"values": {"MEETING_MAX_CONCURRENCY": "0", "MEETING_TEMPERATURE": "hot"}})
+    assert res.status_code == 422
+    detail = res.json()["detail"]
+    assert "MEETING_TEMPERATURE" in detail
+    assert _fields(client)["MEETING_TEMPERATURE"]["source"] == "default"
+
+    res = client.put("/api/settings", json={"values": {"MEETING_MAX_CONCURRENCY": "0"}})
+    assert res.status_code == 422 and "MEETING_MAX_CONCURRENCY" in res.json()["detail"]
+    assert client.put("/api/settings", json={"values": {"NOT_A_SETTING": "x"}}).status_code == 422
+
+
+def test_settings_survive_a_restart(tmp_path):
+    first = create_app(tmp_path, settings_factory=_settings, llm_factory=FakeLLM)
+    with TestClient(first) as c:
+        c.put("/api/settings", json={"values": {"MEETING_WORKER_MODEL": "gemma-3"}})
+    with TestClient(create_app(tmp_path, settings_factory=_settings, llm_factory=FakeLLM)) as c:
+        assert c.get("/api/config").json()["worker_model"] == "gemma-3"
+
+
+def test_connection_can_be_tested_with_unsaved_values(client):
+    client.put("/api/settings", json={"values": {"OPENAI_BASE_URL": "http://saved.invalid/v1"}})
+    result = client.post("/api/llm-check", json={"values": {"OPENAI_BASE_URL": "http://127.0.0.1:9/v1"}}).json()
+    assert result["url"] == "http://127.0.0.1:9/v1/models"
+    assert result["ok"] is False
+    assert _fields(client)["OPENAI_BASE_URL"]["value"] == "http://saved.invalid/v1"  # nothing saved

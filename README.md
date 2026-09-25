@@ -153,7 +153,8 @@ meeting-assistant serve          # http://127.0.0.1:8080  (same .env as the CLI)
 ```
 
 Runs are background jobs kept on disk (`./meeting-data`), so closing the tab
-loses nothing. A `Dockerfile` and OpenShift manifests (`deploy/openshift/`)
+loses nothing. The endpoint, API key, models and tuning can be set in the UI's
+**Settings** dialog instead of `.env` (values saved there take precedence). A `Dockerfile` and OpenShift manifests (`deploy/openshift/`)
 package it for a cluster, reached with `oc port-forward`; see
 [docs/08-Web-UI-And-OpenShift.md](docs/08-Web-UI-And-OpenShift.md).
 

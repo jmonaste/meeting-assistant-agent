@@ -370,6 +370,9 @@ class JobManager:
         live_handler = _JobLogHandler(job)
         pkg_logger.addHandler(file_handler)
         pkg_logger.addHandler(live_handler)
+        # The run log is the full DEBUG audit trail, whatever the console level is.
+        previous_level = pkg_logger.level
+        pkg_logger.setLevel(logging.DEBUG)
 
         resume = job.resume
         with self._lock:
@@ -389,8 +392,8 @@ class JobManager:
             transcript = folder / job.transcript_name
             context_file = folder / "context.txt"
             logger.info(
-                "run started: job=%s transcript=%s worker=%s lead=%s concurrency=%d sweeps=%d resume=%s",
-                job.id, job.transcript_name, settings.resolved_worker_model(),
+                "run started: job=%s transcript=%s endpoint=%s worker=%s lead=%s concurrency=%d sweeps=%d resume=%s",
+                job.id, job.transcript_name, settings.openai_base_url, settings.resolved_worker_model(),
                 settings.resolved_lead_model(), settings.max_concurrency, settings.max_sweeps, resume,
             )
             progress = _Progress(job, self._save, cancel)
@@ -420,6 +423,7 @@ class JobManager:
                 self._save(job)
             pkg_logger.removeHandler(file_handler)
             pkg_logger.removeHandler(live_handler)
+            pkg_logger.setLevel(previous_level)
             file_handler.close()
 
     def _finish(self, job: Job, state: dict) -> None:
