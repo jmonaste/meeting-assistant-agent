@@ -14,6 +14,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.0.4",
     "pydantic>=2.10",
     "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.0",
     "rich>=15.0.0",
     "typer>=0.26.7",
     # web UI (meeting-assistant serve)
