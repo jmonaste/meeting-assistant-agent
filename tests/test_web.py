@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from meeting_assistant.config import load_settings
+from meeting_assistant.config import Settings, load_settings
 from meeting_assistant.web import create_app
 from meeting_assistant.web.app import _render_markdown
 from meeting_assistant.web.jobs import JobManager
@@ -22,6 +22,11 @@ from meeting_assistant.web.jobs import JobManager
 from conftest import FakeLLM
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample-standup.txt"
+
+# The keyword the Settings dialog stores the base URL under (its alias, if it has
+# one). The test factory must use the same key, or the two would both be passed
+# and the factory's value would shadow the one saved in the UI.
+_BASE_URL_KEY = Settings.model_fields["openai_base_url"].alias or "openai_base_url"
 
 
 def _settings(**overrides):
@@ -31,7 +36,7 @@ def _settings(**overrides):
         "MEETING_MAX_SWEEPS": 2,
         "MEETING_USE_CACHE": False,
         "MEETING_MAX_CONCURRENCY": 2,
-        "openai_base_url": "http://127.0.0.1:9/v1",  # nothing listens on the discard port
+        _BASE_URL_KEY: "http://127.0.0.1:9/v1",  # nothing listens on the discard port
     }
     base.update(overrides)
     return load_settings(**base)
