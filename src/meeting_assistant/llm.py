@@ -144,6 +144,7 @@ class MeetingLLM:
             http_client = httpx.Client(
                 verify=self.settings.verify_ssl,
                 timeout=self.settings.request_timeout,
+                follow_redirects=self.settings.follow_redirects,
             )
             self._models[role] = ChatOpenAI(
                 model=model_name,
