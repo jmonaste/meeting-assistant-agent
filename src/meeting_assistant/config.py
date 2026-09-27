@@ -24,10 +24,12 @@ class Settings(BaseSettings):
     # --- LLM endpoint (OpenAI-compatible) ---
     openai_base_url: str = Field(
         default="http://localhost:8000/v1",
+        alias="OPENAI_BASE_URL",
         description="Base URL of the OpenAI-compatible endpoint (must end in /v1).",
     )
     openai_api_key: str = Field(
         default="not-needed",
+        alias="OPENAI_API_KEY",
         description="API key; any non-empty string if the endpoint ignores it.",
     )
     worker_model: str = Field(
@@ -44,6 +46,16 @@ class Settings(BaseSettings):
         default=0.0,
         alias="MEETING_TEMPERATURE",
         description="Sampling temperature (keep 0 for reproducible reports).",
+    )
+    cert_path: str = Field(
+        default="",
+        alias="SSL_CERT_FIELD",
+        description="Path to the certificate.",
+    )
+    follow_redirects: bool = Field(
+        default="False",
+        alias="FOLLOW_REDIRECTS",
+        description="Flag to indicates if follow redirects.",
     )
     verify_ssl: bool = Field(
         default=True,
